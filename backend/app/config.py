@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     )
 
     # App
-    app_name: str = "Search Jobs"
+    app_name: str = "JobPulse"
     app_env: Literal["development", "staging", "production"] = "development"
     debug: bool = False
     api_prefix: str = "/api"

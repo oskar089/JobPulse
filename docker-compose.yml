@@ -86,7 +86,7 @@ services:
       REDIS_URL: "redis://:${REDIS_PASSWORD:-insecure}@redis:6379/0"
 
       # App config (override via .env)
-      APP_NAME: "${APP_NAME:-Search Jobs}"
+      APP_NAME: "${APP_NAME:-JobPulse}"
       APP_ENV: "${APP_ENV:-development}"
       DEBUG: "${DEBUG:-true}"
       API_PREFIX: "${API_PREFIX:-/api}"

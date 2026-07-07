@@ -33,14 +33,17 @@ async def blacklist_refresh_token(user_id: str, refresh_token: str, ttl_seconds:
     The set has a TTL equal to the refresh token lifetime (default 7 days).
     Fails gracefully on Redis error — logs warning, continues.
     """
+    r = None
     try:
         r = await get_redis()
         key = f"refresh_blacklist:{user_id}"
         await r.sadd(key, refresh_token)
         await r.expire(key, ttl_seconds)
-        await r.aclose()
     except RedisError:
         logger.warning("Redis: failed to blacklist refresh token for user %s — continuing", user_id)
+    finally:
+        if r is not None:
+            await r.close()
 
 
 async def is_token_blacklisted(user_id: str, refresh_token: str) -> bool:
@@ -49,15 +52,18 @@ async def is_token_blacklisted(user_id: str, refresh_token: str) -> bool:
     Returns False on Redis error — safe fallback (allow the operation,
     the blacklist check is defense-in-depth, not auth-critical).
     """
+    r = None
     try:
         r = await get_redis()
         key = f"refresh_blacklist:{user_id}"
         result = await r.sismember(key, refresh_token)
-        await r.aclose()
         return bool(result)
     except RedisError:
         logger.warning("Redis: failed to check blacklist for user %s — allowing", user_id)
         return False
+    finally:
+        if r is not None:
+            await r.close()
 
 
 async def clear_user_blacklist(user_id: str) -> None:
@@ -65,13 +71,16 @@ async def clear_user_blacklist(user_id: str) -> None:
 
     Fails gracefully on Redis error — logs warning, continues.
     """
+    r = None
     try:
         r = await get_redis()
         key = f"refresh_blacklist:{user_id}"
         await r.delete(key)
-        await r.aclose()
     except RedisError:
         logger.warning("Redis: failed to clear blacklist for user %s — continuing", user_id)
+    finally:
+        if r is not None:
+            await r.close()
 
 
 # ---------------------------------------------------------------------------

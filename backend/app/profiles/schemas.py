@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 # ---------------------------------------------------------------------------
 # Import / CV item schemas
@@ -10,6 +10,14 @@ from pydantic import BaseModel
 class SkillItem(BaseModel):
     name: str
     level: str = "intermediate"  # beginner | intermediate | advanced | expert
+
+    @field_validator("level", mode="before")
+    @classmethod
+    def _default_none_level(cls, v: object) -> str:
+        """Some LLMs (e.g. Gemma) return ``null`` for level — default to intermediate."""
+        if v is None or v == "":
+            return "intermediate"
+        return str(v)
 
 
 class EducationItem(BaseModel):

@@ -95,7 +95,7 @@ async def health_check():
     try:
         r = await get_redis()
         await r.ping()
-        await r.aclose()
+        await r.close()
         statuses["redis"] = "healthy"
     except Exception as exc:
         logger.warning("Health check: Redis unhealthy — %s", exc)

@@ -1,14 +1,13 @@
 """Unit tests for CVParser.
 
 Tests text extraction via pdfplumber and structured parsing via
-OpenAI function calling.  The OpenAI client is mocked so no API
-calls are made during tests.
+the LLM backend.  The LLM call is mocked so no API calls are made.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -65,32 +64,23 @@ class TestCVParserParseCV:
     async def test_parse_cv_returns_cv_parse_result(self):
         """parse_cv() returns a CVParseResult with parsed fields.
 
-        Given a valid PDF path and a mocked OpenAI response with
+        Given a valid PDF path and a mocked LLM response with
         structured data, the method MUST return a CVParseResult
         containing the parsed fields.
         """
         pdf_path = str(FIXTURES_DIR / "sample_cv.pdf")
         parser = CVParser()
-
-        # Mock the OpenAI client
-        mock_openai = MagicMock()
-        mock_message = MagicMock()
-        mock_message.content = (
-            '{"headline": "Senior Software Engineer", '
-            '"summary": "Full-stack developer", '
-            '"skills": [{"name": "Python", "level": "advanced"}], '
-            '"education": [{"institution": "MIT", "degree": "BS CS", '
-            '"start_date": "2015", "end_date": "2019"}], '
-            '"work_experience": [{"company": "Google", "role": "SWE", '
-            '"start_date": "2020", "description": "Built stuff"}]}'
+        parser._call_llm = AsyncMock(  # type: ignore[method-assign]
+            return_value=(
+                '{"headline": "Senior Software Engineer", '
+                '"summary": "Full-stack developer", '
+                '"skills": [{"name": "Python", "level": "advanced"}], '
+                '"education": [{"institution": "MIT", "degree": "BS CS", '
+                '"start_date": "2015", "end_date": "2019"}], '
+                '"work_experience": [{"company": "Google", "role": "SWE", '
+                '"start_date": "2020", "description": "Built stuff"}]}'
+            ),
         )
-        mock_choice = MagicMock()
-        mock_choice.message = mock_message
-        mock_completion = MagicMock()
-        mock_completion.choices = [mock_choice]
-        mock_openai.chat.completions.create = AsyncMock(return_value=mock_completion)
-
-        parser._client = mock_openai
 
         result = await parser.parse_cv(pdf_path)
 
@@ -106,16 +96,13 @@ class TestCVParserParseCV:
         assert result.id is not None and len(str(result.id)) > 0
 
     @pytest.mark.asyncio
-    async def test_parse_cv_handles_openai_error(self):
-        """parse_cv() raises ValueError when OpenAI returns an error."""
+    async def test_parse_cv_handles_llm_error(self):
+        """parse_cv() raises ValueError when the LLM call fails."""
         pdf_path = str(FIXTURES_DIR / "sample_cv.pdf")
         parser = CVParser()
-
-        mock_openai = MagicMock()
-        mock_openai.chat.completions.create = AsyncMock(
-            side_effect=Exception("OpenAI API error"),
+        parser._call_llm = AsyncMock(  # type: ignore[method-assign]
+            side_effect=ValueError("LLM API error"),
         )
-        parser._client = mock_openai
 
         with pytest.raises(ValueError, match="Failed to parse CV"):
             await parser.parse_cv(pdf_path)
