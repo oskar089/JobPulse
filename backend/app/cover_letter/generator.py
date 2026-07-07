@@ -31,6 +31,12 @@ class CoverLetterGenerator:
     def __init__(self) -> None:
         self._cache: dict[str, str] = {}
 
+    # ── capped cache -------------------------------------------------------
+    def _cache_set(self, key: str, value: str) -> None:
+        if len(self._cache) >= 200:
+            self._cache.clear()
+        self._cache[key] = value
+
     async def generate(
         self,
         input_data: CoverLetterInput,
@@ -45,8 +51,19 @@ class CoverLetterGenerator:
             return cached
 
         prompt = self._build_prompt(input_data)
-        letter = await self._call_llm(prompt, input_data.language)
-        self._cache[cache_key] = letter
+        try:
+            letter = await self._call_llm(prompt, input_data.language)
+        except RuntimeError:
+            logger.error(
+                "Cover letter generation failed after 2 attempts, using template fallback",
+            )
+            letter = (
+                f"Dear Hiring Manager,\n\n"
+                f"I am writing to apply for the {input_data.job_title} "
+                f"position at {input_data.company}.\n\n"
+                f"Sincerely,"
+            )
+        self._cache_set(cache_key, letter)
         return letter
 
     def _build_prompt(self, data: CoverLetterInput) -> str:

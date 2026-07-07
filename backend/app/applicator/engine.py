@@ -52,9 +52,9 @@ class AutoApplicator:
                 "Chrome/125.0.0.0 Safari/537.36"
             ),
         )
-        page = await context.new_page()
-
+        page = None
         try:
+            page = await context.new_page()
             await page.goto(job_url, timeout=self.timeout, wait_until="domcontentloaded")
 
             # --- Find & click apply button ---
@@ -131,6 +131,8 @@ class AutoApplicator:
             return {"status": "failed", "error": str(exc)}
 
         finally:
+            if page is not None:
+                await page.close()
             await context.close()
 
     async def _type_with_delay(self, page, selector: str, text: str) -> None:
@@ -142,9 +144,7 @@ class AutoApplicator:
                 return
             await el.click()
             await el.fill("")
-            for char in text:
-                await page.keyboard.type(char)
-                await asyncio.sleep(random.uniform(0.05, 0.15))
+            await el.type(text, delay=random.randint(50, 150))
         except Exception as exc:
             logger.debug("Could not fill field %s: %s", selector, exc)
 

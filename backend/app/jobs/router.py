@@ -77,7 +77,7 @@ async def clear_stored_jobs(
     # Get portal IDs visible to this user (own portals + public portals)
     result = await session.execute(
         select(Portal.id).where(
-            (Portal.user_id == user_id) | (Portal.user_id.is_(None)),
+            Portal.user_id == user_id,
         ),
     )
     portal_ids = [row[0] for row in result]

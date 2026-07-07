@@ -18,14 +18,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
     // On mount, try to get the current user via cookie-based auth.
     // Cookies are auto-sent by the browser; no localStorage token needed.
     getMe()
-      .then(setUser)
+      .then((data) => { if (!cancelled) setUser(data); })
       .catch(() => {
         /* 401 — not authenticated, that's OK */
       })
-      .finally(() => setIsLoading(false));
+      .finally(() => { if (!cancelled) setIsLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   const login = async (email: string, password: string) => {

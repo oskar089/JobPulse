@@ -33,6 +33,9 @@ class PipelineRun(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="pipeline_runs")  # type: ignore[name-defined]  # noqa: F821
