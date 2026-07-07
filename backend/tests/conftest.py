@@ -14,7 +14,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from playwright.async_api import Browser, Page, Playwright, async_playwright
-from sqlalchemy import JSON, NullPool
+from sqlalchemy import JSON, NullPool, String
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
@@ -26,6 +26,7 @@ from sqlalchemy.ext.compiler import compiles  # noqa: E402
 from app.auth.utils import create_access_token
 from app.database import Base, get_session
 from app.main import app
+from app.middleware.rate_limit import limiter
 
 
 @compiles(ARRAY, "sqlite")
@@ -39,13 +40,14 @@ def compile_uuid_sqlite(type_, compiler, **kw):
     """Use VARCHAR(36) for UUID columns on SQLite."""
     return "VARCHAR(36)"
 
-# Replace ARRAY column types with JSON in metadata so that bind/result
-# processing serializes lists correctly (aiosqlite doesn't accept Python
-# lists as bind parameters — it expects scalar values or JSON strings).
+# Replace ARRAY column types with JSON and UUID columns with String
+# in metadata so that bind/result processing works correctly on SQLite.
 for _table in Base.metadata.tables.values():
     for _col in _table.columns:
         if isinstance(_col.type, ARRAY):
             _col.type = JSON()
+        elif isinstance(_col.type, UUID):
+            _col.type = String(36)
 
 # Default URLs — override via env vars or pytest options
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
@@ -146,12 +148,16 @@ async def async_client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
     """Return an httpx AsyncClient wired to the FastAPI test app.
 
     The get_session dependency is overridden to use the test DB session.
+    Resets the rate limiter before each test to prevent cross-test pollution.
     """
 
     async def override_get_session():
         yield db_session
 
     app.dependency_overrides[get_session] = override_get_session
+
+    # Reset rate limiter storage so each test starts with fresh counters
+    limiter.reset()
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

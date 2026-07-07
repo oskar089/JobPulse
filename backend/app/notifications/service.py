@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import uuid
 from email.message import EmailMessage
 
@@ -14,8 +15,9 @@ class NotificationService:
     """Dispatch notifications through in-app storage and email.
 
     Email uses SMTP via *aiosmtplib* with automatic retry (3 attempts,
-    exponential backoff). In-app notifications create DB rows in the
-    ``notification`` table.
+    exponential backoff) and mandatory STARTTLS enforcement.
+
+    In-app notifications create DB rows in the ``notification`` table.
     """
 
     def __init__(self, session_factory) -> None:
@@ -48,9 +50,11 @@ class NotificationService:
             return str(notif.id)
 
     async def send_email(self, to: str, subject: str, body: str) -> bool:
-        """Send an email via SMTP with up to 3 retries.
+        """Send an email via SMTP with STARTTLS and up to 3 retries.
 
-        Returns ``True`` if sent successfully, ``False`` otherwise.
+        Enforces STARTTLS — if the server does not support it, the attempt
+        fails and is retried. Returns ``True`` if sent successfully,
+        ``False`` otherwise.
         """
         if not settings.smtp_host:
             logger.warning("SMTP not configured — skipping email to %s", to)
@@ -70,6 +74,8 @@ class NotificationService:
                     port=settings.smtp_port,
                     timeout=30,
                 ) as smtp:
+                    # Enforce STARTTLS — fail if server does not support it
+                    await smtp.starttls()
                     if settings.smtp_user and settings.smtp_password:
                         await smtp.login(settings.smtp_user, settings.smtp_password)
                     await smtp.send_message(msg)
@@ -83,6 +89,31 @@ class NotificationService:
 
         logger.error("All SMTP retries exhausted for %s: %s", to, last_error)
         return False
+
+    async def check_smtp_connectivity(self) -> bool | None:
+        """Check SMTP server connectivity at startup.
+
+        Connects to the configured SMTP server and attempts STARTTLS.
+        Returns ``True`` if reachable, ``False`` if unreachable, or
+        ``None`` if SMTP is not configured.
+        """
+        if not settings.smtp_host:
+            logger.info("SMTP not configured — skipping connectivity check")
+            return None
+
+        try:
+            async with aiosmtplib.SMTP(
+                hostname=settings.smtp_host,
+                port=settings.smtp_port,
+                timeout=10,
+            ) as smtp:
+                await smtp.starttls()
+                await smtp.quit()
+            logger.info("SMTP connectivity check passed for %s:%s", settings.smtp_host, settings.smtp_port)
+            return True
+        except Exception as exc:
+            logger.warning("SMTP server unreachable at %s:%s — %s", settings.smtp_host, settings.smtp_port, exc)
+            return False
 
     async def notify_application_submitted(
         self,
@@ -120,7 +151,9 @@ class NotificationService:
     ) -> None:
         """Send in-app + email notification for a failed submission."""
         title = "Application Failed"
-        body = f"Your application for {job_title} at {company} failed: {error}"
+        # Sanitize error text: truncate to 200 chars, strip non-printable chars
+        safe_error = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", error)[:200]
+        body = f"Your application for {job_title} at {company} failed: {safe_error}"
 
         await self.create_in_app(
             user_id=user_id,

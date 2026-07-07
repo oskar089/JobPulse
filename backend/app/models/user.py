@@ -43,6 +43,12 @@ class User(Base):
     pipeline_runs: Mapped[list["PipelineRun"]] = relationship(  # noqa: F821
         "PipelineRun", back_populates="user"
     )  # type: ignore[name-defined]
+    curricula_vitae: Mapped[list["CurriculumVitae"]] = relationship(  # noqa: F821
+        "CurriculumVitae", back_populates="user"
+    )  # type: ignore[name-defined]
+    scrape_sessions: Mapped[list["ScrapeSession"]] = relationship(  # noqa: F821
+        "ScrapeSession", back_populates="user"
+    )  # type: ignore[name-defined]
 
     def __repr__(self) -> str:
         return f"<User {self.email}>"

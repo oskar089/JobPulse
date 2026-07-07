@@ -1,8 +1,8 @@
 """CV PDF parser — text extraction plus LLM-powered structured parsing.
 
-Uses ``pdfplumber`` for text extraction and any OpenAI-compatible LLM
-(Ollama, OpenAI, etc.) to extract structured profile fields from the
-raw text.
+Uses ``pdfplumber`` for text extraction and calls an LLM (Ollama native API
+or any OpenAI-compatible endpoint) to extract structured profile fields from
+the raw text.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import logging
 import uuid
 from pathlib import Path
 
-from openai import AsyncOpenAI
+import httpx
 
 from app.config import settings
 from app.profiles.schemas import CVParseResult, ImportedProfile
@@ -28,15 +28,36 @@ _EXTRACTION_PROMPT = """You are a CV/resume parser. Extract structured data from
 following CV text and return a JSON object with these fields:
 - headline (str or null): The professional headline / current title
 - summary (str or null): Professional summary or objective
-- skills (list of {{"name": str, "level": str}}): Technical and professional skills.
+- skills (list of {"name": str, "level": str}): Technical and professional skills.
   Level must be one of: beginner, intermediate, advanced, expert.
-- education (list of {{"institution": str, "degree": str, "field": str or null,
-  "start_date": str or null, "end_date": str or null}}): Educational entries.
-- work_experience (list of {{"company": str, "role": str, "start_date": str or null,
-  "end_date": str or null, "description": str or null, "current": bool}}):
-  Work experience entries.
+- education (list of {"institution": str, "degree": str, "field": str or null,
+  "start_date": str or null, "end_date": str or null}): Formal education only
+  (degrees, diplomas from universities/colleges). Do NOT include courses,
+  bootcamps, workshops, or certifications here.
+- work_experience (list of {"company": str, "role": str, "start_date": str or null,
+  "end_date": str or null, "description": str or null, "current": bool}):
+  Paid employment, internships, freelance work, and full-time roles only.
+  Do NOT include courses, bootcamps, online training, or certifications in
+  work_experience.
 
 Return ONLY valid JSON, no markdown formatting, no explanation, no code blocks."""
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _detect_llm_backend(url: str) -> str:
+    """Auto-detect the LLM backend type from the base URL.
+
+    Returns ``"ollama"``, ``"openai"``, or ``"generic"``.
+    """
+    if "localhost" in url or "127.0.0.1" in url or "ollama" in url:
+        return "ollama"
+    if "openai" in url.lower() or "api.openai" in url:
+        return "openai"
+    return "generic"
 
 
 # ---------------------------------------------------------------------------
@@ -51,12 +72,12 @@ class CVParser:
     1. ``extract_text()`` — extract raw text via ``pdfplumber``.
     2. ``parse_cv()`` — send text to the configured LLM for structured extraction.
 
-    The LLM client is lazily initialised so that ``extract_text()``
-    can be called without an API key configured.
+    Supports both the Ollama native API (``/api/chat``) and any OpenAI-compatible
+    backend (``/v1/chat/completions``). The backend is auto-detected from the URL.
     """
 
-    def __init__(self, openai_client: AsyncOpenAI | None = None) -> None:
-        self._client = openai_client
+    def __init__(self, http_client: httpx.AsyncClient | None = None) -> None:
+        self._http_client = http_client
 
     # ------------------------------------------------------------------
     # Public API
@@ -143,46 +164,37 @@ class CVParser:
     # ------------------------------------------------------------------
 
     async def _parse_with_llm(self, text: str) -> ImportedProfile:
-        """Send extracted text to the configured LLM and parse the structured response.
+        """Send extracted text to the LLM and parse the structured response.
 
-        Falls back gracefully if ``response_format`` is not supported by the
-        backend (e.g. some Ollama models).
+        Auto-detects the backend (Ollama native vs OpenAI-compatible) from
+        ``settings.llm_api_url`` and calls the appropriate endpoint.
+
+        Retries once with a strengthened prompt if the first attempt returns
+        malformed JSON.
         """
-        client = self._get_client()
+        backend = _detect_llm_backend(settings.llm_api_url)
 
-        kwargs: dict = {
-            "model": settings.llm_model,
-            "messages": [
-                {"role": "system", "content": _EXTRACTION_PROMPT},
-                {"role": "user", "content": text},
-            ],
-            "temperature": 0.1,
-        }
+        messages = [
+            {"role": "system", "content": _EXTRACTION_PROMPT},
+            {"role": "user", "content": text},
+        ]
 
-        # Some Ollama models don't support response_format — try with it,
-        # fall back without if it fails.
-        use_response_format = True
+        # Retry loop: first attempt, then retry with strengthened prompt if needed
         for attempt in range(2):
             try:
-                if use_response_format:
-                    kwargs["response_format"] = {"type": "json_object"}
-                completion = await client.chat.completions.create(**kwargs)
-                raw = completion.choices[0].message.content
+                raw = await self._call_llm(messages, backend)
                 if not raw:
                     raise ValueError("Empty response from LLM")
                 data = json.loads(raw)
                 return ImportedProfile(**data)
-            except (json.JSONDecodeError, Exception) as exc:
-                if attempt == 0 and use_response_format:
+            except (json.JSONDecodeError, ValueError, Exception) as exc:
+                if attempt == 0:
                     logger.info(
-                        "LLM CV parsing with response_format failed (%s), "
-                        "retrying without it",
+                        "LLM CV parsing attempt 1 failed (%s), retrying "
+                        "with strengthened prompt",
                         exc,
                     )
-                    use_response_format = False
-                    kwargs.pop("response_format", None)
-                    # Strengthen the prompt to force JSON-only output
-                    kwargs["messages"][0]["content"] = (
+                    messages[0]["content"] = (
                         _EXTRACTION_PROMPT
                         + "\n\nCRITICAL: Respond with raw JSON only. "
                         "No markdown, no code fences, no explanation."
@@ -195,11 +207,93 @@ class CVParser:
 
         raise ValueError("Unexpected: LLM parsing loop exited without return")
 
-    def _get_client(self) -> AsyncOpenAI:
-        """Return the LLM client, creating it lazily if needed."""
-        if self._client is None:
-            self._client = AsyncOpenAI(
-                base_url=settings.llm_api_url,
-                api_key=settings.llm_api_key,
-            )
-        return self._client
+    async def _call_llm(
+        self,
+        messages: list[dict[str, str]],
+        backend: str,
+    ) -> str:
+        """Dispatch the LLM call to the correct backend."""
+        if backend == "ollama":
+            return await self._call_ollama(messages)
+        return await self._call_openai_compat(messages)
+
+    # ------------------------------------------------------------------
+    # Ollama native API  (POST /api/chat)
+    # ------------------------------------------------------------------
+
+    async def _call_ollama(self, messages: list[dict[str, str]]) -> str:
+        """Call Ollama's native ``/api/chat`` endpoint.
+
+        API docs: https://github.com/ollama/ollama/blob/main/docs/api.md
+        """
+        client = self._get_http_client()
+        base = settings.llm_api_url.rstrip("/")
+
+        # Strip any OpenAI-compatible path suffix — we build our own.
+        for suffix in ("/v1/chat/completions", "/v1", "/api"):
+            if base.endswith(suffix):
+                base = base[: -len(suffix)]
+                break
+
+        url = f"{base}/api/chat"
+        payload = {
+            "model": settings.llm_model,
+            "messages": messages,
+            "stream": False,
+            "options": {"temperature": 0.1},
+        }
+
+        resp = await client.post(url, json=payload, timeout=120.0)
+        resp.raise_for_status()
+        body = resp.json()
+
+        # Response: { "model": "...", "message": { "role": "...", "content": "..." }, "done": true }
+        content = body.get("message", {}).get("content", "")
+        if not content:
+            raise ValueError(f"Ollama returned empty content: {body}")
+
+        # Strip markdown fences if the model wrapped it anyway
+        return content.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+
+    # ------------------------------------------------------------------
+    # OpenAI-compatible endpoint  (POST /v1/chat/completions)
+    # ------------------------------------------------------------------
+
+    async def _call_openai_compat(self, messages: list[dict[str, str]]) -> str:
+        """Call any OpenAI-compatible ``/v1/chat/completions`` endpoint."""
+        client = self._get_http_client()
+        url = settings.llm_api_url.rstrip("/")
+
+        payload = {
+            "model": settings.llm_model,
+            "messages": messages,
+            "temperature": 0.1,
+            "max_tokens": 4096,
+        }
+
+        resp = await client.post(
+            url,
+            json=payload,
+            headers={"Authorization": f"Bearer {settings.llm_api_key}"}
+            if settings.llm_api_key
+            else {},
+            timeout=120.0,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+
+        content = body.get("choices", [{}])[0].get("message", {}).get("content", "")
+        if not content:
+            raise ValueError(f"OpenAI endpoint returned empty content: {body}")
+
+        return content.strip()
+
+    # ------------------------------------------------------------------
+    # Client factory
+    # ------------------------------------------------------------------
+
+    def _get_http_client(self) -> httpx.AsyncClient:
+        """Return the HTTP client, creating it lazily if needed."""
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient()
+        return self._http_client

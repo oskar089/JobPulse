@@ -3,7 +3,7 @@ from datetime import datetime
 
 from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
@@ -27,6 +27,9 @@ class CurriculumVitae(Base):
     uploaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+    # Relationships
+    user: Mapped["User"] = relationship("User", back_populates="curricula_vitae")  # type: ignore[name-defined]  # noqa: F821
 
     def __repr__(self) -> str:
         return f"<CurriculumVitae {self.filename} (user={self.user_id})>"

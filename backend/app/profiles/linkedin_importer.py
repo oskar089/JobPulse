@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from typing import Protocol, runtime_checkable
+from urllib.parse import urlparse
 
 import httpx
 
@@ -132,9 +133,14 @@ class LinkedInImporter:
     @staticmethod
     def _validate_url(url: str) -> None:
         """Validate that the URL points to a LinkedIn profile."""
-        if "linkedin.com" not in url:
+        parsed = urlparse(url)
+        if parsed.netloc not in ("linkedin.com", "www.linkedin.com", ""):
             raise ValueError(
                 f"Invalid LinkedIn URL: '{url}'. URL must contain 'linkedin.com'.",
+            )
+        if parsed.scheme != "https":
+            raise ValueError(
+                f"Invalid LinkedIn URL: '{url}'. URL must use HTTPS.",
             )
 
     @staticmethod

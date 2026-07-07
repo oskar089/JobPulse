@@ -116,6 +116,12 @@ async def trigger_pipeline(
             logger.warning("Failed to dispatch Celery task for %s: %s", run["pipeline_run_id"], exc)
             run["status"] = "dispatch_failed"
             run["error"] = str(exc)
+            # Mark as failed in DB to avoid orphaned "pending" runs
+            async with get_session() as session:
+                pipeline = await session.get(PipelineRun, run["pipeline_run_id"])
+                if pipeline:
+                    pipeline.status = "failed"
+                    pipeline.error_msg = f"Dispatch failed: {exc}"
             failed += 1
 
     if queued == 0 and failed > 0:

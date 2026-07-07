@@ -1,6 +1,7 @@
 """Celery task: scrape a portal and persist StoredJob rows."""
 
 import logging
+import re
 
 from sqlalchemy import select
 
@@ -14,7 +15,14 @@ from app.tasks import run_async
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
+def sanitize(text: str | None) -> str:
+    """Strip control characters from scraped text fields."""
+    if not text:
+        return text or ""
+    return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+
+
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=60, acks_late=True, reject_on_worker_lost=True)
 def scrape_portal(
     self,  # noqa: ARG001 — Celery task instance (used by .retry())
     portal_id: str,
@@ -104,10 +112,10 @@ async def _scrape_portal(
             job = StoredJob(
                 portal_id=portal_id,
                 external_id=sj.external_id,
-                title=sj.title,
-                company=sj.company,
+                title=sanitize(sj.title),
+                company=sanitize(sj.company),
                 location=sj.location,
-                description=sj.description,
+                description=sanitize(sj.description),
                 url=sj.url,
                 salary_range=sj.salary_range,
                 language=sj.language,

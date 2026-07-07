@@ -1,0 +1,141 @@
+"""Async Redis client for auth operations (refresh token blacklist)."""
+
+from __future__ import annotations
+
+import logging
+
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
+
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+async def get_redis() -> Redis:
+    """Return an async Redis connection."""
+    return Redis.from_url(settings.redis_url, decode_responses=True)
+
+
+async def _safe_call(description: str, coro) -> None:
+    """Execute a Redis coroutine with error handling, logging failures."""
+    try:
+        await coro
+    except RedisError:
+        logger.warning("Redis operation failed: %s — continuing gracefully", description)
+    except Exception:
+        logger.exception("Unexpected Redis error: %s", description)
+
+
+async def blacklist_refresh_token(user_id: str, refresh_token: str, ttl_seconds: int = 604800) -> None:
+    """Add a refresh token to the user's blacklist set.
+
+    The set has a TTL equal to the refresh token lifetime (default 7 days).
+    Fails gracefully on Redis error — logs warning, continues.
+    """
+    r = None
+    try:
+        r = await get_redis()
+        key = f"refresh_blacklist:{user_id}"
+        await r.sadd(key, refresh_token)
+        await r.expire(key, ttl_seconds)
+    except RedisError:
+        logger.warning("Redis: failed to blacklist refresh token for user %s — continuing", user_id)
+    finally:
+        if r is not None:
+            await r.close()
+
+
+async def is_token_blacklisted(user_id: str, refresh_token: str) -> bool:
+    """Check if a refresh token is blacklisted.
+
+    Returns False on Redis error — safe fallback (allow the operation,
+    the blacklist check is defense-in-depth, not auth-critical).
+    """
+    r = None
+    try:
+        r = await get_redis()
+        key = f"refresh_blacklist:{user_id}"
+        result = await r.sismember(key, refresh_token)
+        return bool(result)
+    except RedisError:
+        logger.warning("Redis: failed to check blacklist for user %s — allowing", user_id)
+        return False
+    finally:
+        if r is not None:
+            await r.close()
+
+
+async def clear_user_blacklist(user_id: str) -> None:
+    """Delete the entire blacklist set for a user (theft detected).
+
+    Fails gracefully on Redis error — logs warning, continues.
+    """
+    r = None
+    try:
+        r = await get_redis()
+        key = f"refresh_blacklist:{user_id}"
+        await r.delete(key)
+    except RedisError:
+        logger.warning("Redis: failed to clear blacklist for user %s — continuing", user_id)
+    finally:
+        if r is not None:
+            await r.close()
+
+
+# ---------------------------------------------------------------------------
+# Account lockout — 5 consecutive failed logins → 15 min lockout
+# ---------------------------------------------------------------------------
+LOCKOUT_THRESHOLD = 5
+LOCKOUT_TTL = 900  # 15 minutes in seconds
+
+
+async def record_failed_login(user_id: str) -> int:
+    """Increment the failed-login counter for a user.
+
+    Sets a 15-minute TTL on the first increment. Returns the current count.
+    Fails gracefully on Redis error — logs warning, returns 0.
+    """
+    try:
+        r = await get_redis()
+        key = f"lockout:{user_id}"
+        count = await r.incr(key)
+        if count == 1:
+            await r.expire(key, LOCKOUT_TTL)
+        await r.close()
+        return count
+    except RedisError:
+        logger.warning("Redis: failed to record failed login for user %s — continuing", user_id)
+        return 0
+
+
+async def is_account_locked(user_id: str) -> bool:
+    """Check if an account is locked (failed-login count >= threshold).
+
+    Returns False on Redis error — safe fallback.
+    """
+    try:
+        r = await get_redis()
+        key = f"lockout:{user_id}"
+        value = await r.get(key)
+        await r.close()
+        if value is None:
+            return False
+        return int(value) >= LOCKOUT_THRESHOLD
+    except RedisError:
+        logger.warning("Redis: failed to check lockout for user %s — allowing", user_id)
+        return False
+
+
+async def clear_lockout(user_id: str) -> None:
+    """Delete the lockout key for a user (successful login).
+
+    Fails gracefully on Redis error — logs warning, continues.
+    """
+    try:
+        r = await get_redis()
+        key = f"lockout:{user_id}"
+        await r.delete(key)
+        await r.close()
+    except RedisError:
+        logger.warning("Redis: failed to clear lockout for user %s — continuing", user_id)

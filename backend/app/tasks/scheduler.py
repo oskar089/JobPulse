@@ -18,7 +18,7 @@ from app.tasks import run_async
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task
+@celery_app.task(acks_late=True, reject_on_worker_lost=True)
 def scheduled_pipeline_check() -> dict:
     """Entry point called by Celery Beat every 15 minutes."""
     return run_async(_scheduled_pipeline_check())
@@ -97,6 +97,13 @@ async def _scheduled_pipeline_check() -> dict:
                     "Failed to dispatch pipeline %s: %s",
                     run["pipeline_run_id"], exc,
                 )
+                # Mark as failed in DB to avoid orphaned "pending" runs
+                async with async_session_factory() as session:
+                    pipeline = await session.get(PipelineRun, run["pipeline_run_id"])
+                    if pipeline:
+                        pipeline.status = "failed"
+                        pipeline.error_msg = f"Dispatch failed: {exc}"
+                        await session.commit()
                 total_failed += 1
 
     logger.info(

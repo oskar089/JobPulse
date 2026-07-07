@@ -1,4 +1,5 @@
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
@@ -9,7 +10,7 @@ from app.config import settings
 from app.database import get_session
 from app.models import CurriculumVitae, Profile
 from app.profiles.cv_parser import CVParser
-from app.profiles.file_storage import FileStorageService
+from app.profiles.file_storage import FileStorageService, validate_file
 from app.profiles.linkedin_importer import LinkedInImporter
 from app.profiles.merge_service import MergeService
 from app.profiles.schemas import (
@@ -108,10 +109,11 @@ async def import_linkedin(
         # Free Playwright path
         from app.scrapers.profile_scraper import LinkedInProfileScraper
 
-        if "linkedin.com" not in body.url:
+        parsed = urlparse(str(body.url))
+        if parsed.netloc not in ("linkedin.com", "www.linkedin.com"):
             raise HTTPException(
                 status_code=422,
-                detail=f"Invalid LinkedIn URL: '{body.url}'. URL must contain 'linkedin.com'.",
+                detail=f"Invalid LinkedIn URL: '{body.url}'. URL must be a valid linkedin.com URL.",
             )
 
         scraper = LinkedInProfileScraper(
@@ -124,7 +126,8 @@ async def import_linkedin(
             msg = str(e)
             if "login" in msg.lower():
                 raise HTTPException(status_code=401, detail=msg)
-            raise HTTPException(status_code=502, detail=f"LinkedIn scrape failed: {e}")
+            logger.error("LinkedIn scrape failed for URL %s: %s", body.url, e)
+            raise HTTPException(status_code=502, detail="LinkedIn scrape failed. Check the URL and try again.")
 
 
 @router.post("/import/infojobs", response_model=ImportedProfile)
@@ -136,10 +139,11 @@ async def import_infojobs(
 
     Returns parsed fields for the user to review before saving.
     """
-    if "infojobs" not in body.url:
+    parsed = urlparse(str(body.url))
+    if parsed.netloc not in ("infojobs.com", "www.infojobs.com"):
         raise HTTPException(
             status_code=422,
-            detail=f"Invalid Infojobs URL: '{body.url}'. URL must contain 'infojobs'.",
+            detail=f"Invalid Infojobs URL: '{body.url}'. URL must be a valid infojobs.com URL.",
         )
 
     from app.scrapers.profile_scraper import InfojobsProfileScraper
@@ -148,9 +152,10 @@ async def import_infojobs(
     try:
         return await scraper.parse_profile(body.url)
     except Exception as e:
+        logger.error("Infojobs scrape failed for URL %s: %s", body.url, e)
         raise HTTPException(
             status_code=502,
-            detail=f"Failed to scrape Infojobs profile: {e}",
+            detail="Failed to scrape Infojobs profile.",
         )
 
 
@@ -209,14 +214,8 @@ async def upload_cv(
     Validates that the file is a PDF and does not exceed 10 MB.
     Parses the content via OpenAI and returns extracted fields for preview.
     """
-    # --- Validate PDF content type ---
-    content_type = (file.content_type or "").lower()
-    filename = (file.filename or "").lower()
-    if content_type != "application/pdf" and not filename.endswith(".pdf"):
-        raise HTTPException(
-            status_code=422,
-            detail="Only PDF files are accepted.",
-        )
+    # --- Validate file (extension, content-type, magic bytes) ---
+    await validate_file(file)
 
     # --- Validate file size ---
     content = await file.read()
@@ -231,44 +230,52 @@ async def upload_cv(
     storage = FileStorageService(upload_dir=settings.upload_dir)
     cv_meta = await storage.save(file, user_id)
 
-    # --- Parse CV via OpenAI ---
-    file_path = str(Path(settings.upload_dir) / f"{cv_meta.id}.pdf")
-    parser = CVParser()
     try:
-        parse_result = await parser.parse_cv(file_path)
-    except Exception:
-        # File saved but parsing failed — return metadata without parsed data
-        parse_result = CVParseResult(
+        # --- Parse CV via OpenAI ---
+        file_path = str(Path(settings.upload_dir) / f"{cv_meta.id}.pdf")
+        parser = CVParser()
+        try:
+            parse_result = await parser.parse_cv(file_path)
+        except Exception:
+            # File saved but parsing failed — return metadata without parsed data
+            parse_result = CVParseResult(
+                id=cv_meta.id,
+                file_name=cv_meta.filename,
+                file_size=cv_meta.file_size,
+                parsed_data=ImportedProfile(),
+            )
+
+        # --- Create DB record ---
+        cv_record = CurriculumVitae(
             id=cv_meta.id,
-            file_name=cv_meta.filename,
+            user_id=user_id,
+            filename=cv_meta.filename,
+            file_path=file_path,
             file_size=cv_meta.file_size,
-            parsed_data=ImportedProfile(),
+            parsed_data=(
+                parse_result.parsed_data.model_dump()
+                if parse_result.parsed_data
+                else None
+            ),
         )
+        session.add(cv_record)
 
-    # --- Create DB record ---
-    cv_record = CurriculumVitae(
-        id=cv_meta.id,
-        user_id=user_id,
-        filename=cv_meta.filename,
-        file_path=file_path,
-        file_size=cv_meta.file_size,
-        parsed_data=(
-            parse_result.parsed_data.model_dump()
-            if parse_result.parsed_data
-            else None
-        ),
-    )
-    session.add(cv_record)
+        # --- Update profile's cv_file_url ---
+        profile_result = await session.execute(
+            select(Profile).where(Profile.user_id == user_id),
+        )
+        profile = profile_result.scalar_one_or_none()
+        if profile is not None:
+            profile.cv_file_url = file_path
 
-    # --- Update profile's cv_file_url ---
-    profile_result = await session.execute(
-        select(Profile).where(Profile.user_id == user_id),
-    )
-    profile = profile_result.scalar_one_or_none()
-    if profile is not None:
-        profile.cv_file_url = file_path
-
-    await session.flush()
+        await session.flush()
+    except Exception:
+        # DB or parsing failed — remove orphan file to prevent leaked files
+        try:
+            storage.delete(cv_meta.id)
+        except Exception:
+            pass
+        raise
 
     return CVParseResult(
         id=cv_meta.id,
