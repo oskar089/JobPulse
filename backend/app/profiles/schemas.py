@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 # ---------------------------------------------------------------------------
 # Import / CV item schemas
@@ -63,7 +63,7 @@ class CVParseResult(BaseModel):
 class ImportUrlRequest(BaseModel):
     """Request body containing a URL to import."""
 
-    url: str
+    url: HttpUrl = Field(max_length=2048)
 
 
 class MergeRequest(BaseModel):
@@ -106,9 +106,9 @@ class ProfileResponse(BaseModel):
     # Profile import / CV fields
     headline: str | None = None
     summary: str | None = None
-    skills: list[SkillItem] = []
-    education: list[EducationItem] = []
-    work_experience: list[ExperienceItem] = []
+    skills: list[SkillItem] | None = None
+    education: list[EducationItem] | None = None
+    work_experience: list[ExperienceItem] | None = None
     linkedin_url: str | None = None
     infojobs_url: str | None = None
     cv_file_url: str | None = None

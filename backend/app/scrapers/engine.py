@@ -195,9 +195,9 @@ class ScraperEngine:
             if "linkedin.com" in url:
                 await self._login_linkedin(context)
 
-            page = await context.new_page()
-
+            page = None
             try:
+                page = await context.new_page()
                 await page.goto(url, timeout=self.timeout, wait_until="domcontentloaded")
 
                 # Wait for the job card container to appear
@@ -218,7 +218,8 @@ class ScraperEngine:
 
                 return jobs
             finally:
-                await page.close()
+                if page is not None:
+                    await page.close()
         finally:
             await context.close()
 

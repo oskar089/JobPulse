@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, HttpUrl
 
 
 class PortalSelectors(BaseModel):
@@ -19,16 +19,16 @@ class PortalSelectors(BaseModel):
 
 class PortalCreate(BaseModel):
     name: str
-    base_url: str
-    job_listing_url: str
+    base_url: HttpUrl
+    job_listing_url: HttpUrl
     selectors: PortalSelectors
     scrape_interval_min: int = 60
 
 
 class PortalUpdate(BaseModel):
     name: str | None = None
-    base_url: str | None = None
-    job_listing_url: str | None = None
+    base_url: HttpUrl | None = None
+    job_listing_url: HttpUrl | None = None
     selectors: PortalSelectors | None = None
     is_enabled: bool | None = None
     scrape_interval_min: int | None = None

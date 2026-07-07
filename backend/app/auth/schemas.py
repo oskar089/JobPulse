@@ -1,6 +1,6 @@
 import re
 
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class RegisterRequest(BaseModel):
@@ -32,11 +32,11 @@ class TokenResponse(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: str = Field(max_length=2048)
 
 
 class LogoutRequest(BaseModel):
-    refresh_token: str = ""
+    refresh_token: str = Field(default="", max_length=2048)
 
 
 class ForgotPasswordRequest(BaseModel):

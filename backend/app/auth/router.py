@@ -253,7 +253,9 @@ async def forgot_password(
 
 
 @router.post("/reset-password")
+@limiter.limit("5/minute")
 async def reset_password(
+    request: Request,
     body: ResetPasswordRequest,
     session: AsyncSession = Depends(get_session),
 ):

@@ -31,9 +31,13 @@ class ScrapeSession(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
 
     # Relationships
     portal: Mapped["Portal"] = relationship("Portal", back_populates="scrape_sessions")  # type: ignore[name-defined]  # noqa: F821
+    user: Mapped["User | None"] = relationship("User", back_populates="scrape_sessions")  # type: ignore[name-defined]  # noqa: F821
 
     def __repr__(self) -> str:
         return f"<ScrapeSession {self.id} status={self.status}>"

@@ -13,7 +13,7 @@ export async function getMyProfile(): Promise<Profile> {
 
 export async function updateMyProfile(data: ProfileUpdate): Promise<Profile> {
   return api<Profile>("/profiles", {
-    method: "PUT",
+    method: "PATCH",
     body: JSON.stringify(data),
   });
 }

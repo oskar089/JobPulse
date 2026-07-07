@@ -1,5 +1,7 @@
+import ipaddress
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
@@ -105,10 +107,12 @@ async def create_portal(
 async def get_portal(
     portal_id: str,
     session: AsyncSession = Depends(get_session),
-    user_id: str = Depends(get_current_user_id),  # noqa: ARG001 — ensures auth
+    user_id: str = Depends(get_current_user_id),
 ):
     """Get a single portal configuration by ID."""
-    return await _get_portal_or_404(portal_id, session)
+    portal = await _get_portal_or_404(portal_id, session)
+    _assert_owner(portal, user_id)
+    return portal
 
 
 @router.put("/{portal_id}", response_model=PortalResponse)
@@ -169,7 +173,7 @@ async def dry_run_portal(
         default=None,
         description="Override the portal's job_listing_url for this test run",
     ),
-    user_id: str = Depends(get_current_user_id),  # noqa: ARG001 — ensures auth
+    user_id: str = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_session),
 ):
     """Run a dry‑run scrape against a portal and return parsed jobs without persisting.
@@ -179,6 +183,25 @@ async def dry_run_portal(
     or a local HTML fixture.
     """
     portal = await _get_portal_or_404(portal_id, session)
+    _assert_owner(portal, user_id)
+
+    # Validate test_url against SSRF attacks
+    if test_url:
+        parsed = urlparse(test_url)
+        if parsed.scheme not in ("http", "https"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid URL scheme. Only http and https are allowed.",
+            )
+        try:
+            addr = ipaddress.ip_address(parsed.hostname)
+            if addr.is_private or addr.is_loopback or addr.is_link_local:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="URL points to a private or reserved IP address.",
+                )
+        except ValueError:
+            pass  # hostname is a domain name, not an IP — OK
 
     # Build engine‑compatible selectors from the stored JSON
     raw: dict[str, Any] = portal.selectors
@@ -203,7 +226,7 @@ async def dry_run_portal(
         logger.error("Dry-run failed for portal %s: %s", portal_id, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Dry-run scrape failed: {exc}",
+            detail="Dry-run scrape failed. Check the portal configuration and URL.",
         ) from exc
 
     if not jobs:

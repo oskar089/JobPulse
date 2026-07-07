@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import uuid
 from email.message import EmailMessage
 
@@ -150,7 +151,9 @@ class NotificationService:
     ) -> None:
         """Send in-app + email notification for a failed submission."""
         title = "Application Failed"
-        body = f"Your application for {job_title} at {company} failed: {error}"
+        # Sanitize error text: truncate to 200 chars, strip non-printable chars
+        safe_error = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", error)[:200]
+        body = f"Your application for {job_title} at {company} failed: {safe_error}"
 
         await self.create_in_app(
             user_id=user_id,
