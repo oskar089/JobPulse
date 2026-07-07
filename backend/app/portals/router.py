@@ -3,12 +3,13 @@ import logging
 from typing import Any
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.router import get_current_user_id
 from app.database import get_session
+from app.middleware.rate_limit import limiter
 from app.models import Portal
 from app.portals.schemas import PortalCreate, PortalResponse, PortalUpdate
 from app.scrapers.engine import PortalSelectors as EngineSelectors
@@ -84,7 +85,9 @@ async def list_portals(
 
 
 @router.post("", response_model=PortalResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
 async def create_portal(
+    request: Request,
     body: PortalCreate,
     user_id: str = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_session),

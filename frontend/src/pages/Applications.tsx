@@ -4,7 +4,7 @@ import { listApplications } from "../lib/applications";
 import { Card } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
 import { Modal } from "../components/ui/Modal";
-import { Briefcase, ExternalLink, FileText, XCircle, CheckCircle, Loader2 } from "lucide-react";
+import { Briefcase, ExternalLink, XCircle, CheckCircle, Loader2 } from "lucide-react";
 import type { Application } from "../types";
 
 const STATUS_LABELS: Record<string, { label: string; variant: "default" | "success" | "warning" | "danger" | "info" }> = {

@@ -20,6 +20,7 @@ async def list_applications(
     user_id: str = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_session),
     limit: int = 50,
+    offset: int = 0,
     status_filter: str | None = None,
 ):
     """Return the current user's applications, newest first.
@@ -37,7 +38,7 @@ async def list_applications(
     if status_filter:
         query = query.where(Application.status == status_filter)
 
-    query = query.order_by(Application.created_at.desc()).limit(limit)
+    query = query.order_by(Application.created_at.desc()).offset(offset).limit(limit)
 
     result = await session.execute(query)
     applications = result.unique().scalars().all()
@@ -82,7 +83,10 @@ async def get_application(
     """Return a single application with full detail."""
     result = await session.execute(
         select(Application)
-        .options(joinedload(Application.stored_job))
+        .options(
+            joinedload(Application.stored_job)
+            .joinedload(StoredJob.portal),
+        )
         .where(Application.id == application_id, Application.user_id == user_id),
     )
     app = result.unique().scalar_one_or_none()
@@ -93,14 +97,7 @@ async def get_application(
             detail="Application not found",
         )
 
-    portal_name = "Unknown"
-    if app.stored_job:
-        portal_result = await session.execute(
-            select(Portal.name).where(Portal.id == app.stored_job.portal_id),
-        )
-        row = portal_result.one_or_none()
-        if row:
-            portal_name = row[0]
+    portal_name = app.stored_job.portal.name if app.stored_job and app.stored_job.portal else "Unknown"
 
     return {
         "id": app.id,

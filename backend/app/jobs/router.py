@@ -20,6 +20,7 @@ async def list_stored_jobs(
     user_id: str = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_session),
     limit: int = 20,
+    offset: int = 0,
 ):
     """Return stored jobs visible to the current user (public + owned portals)."""
     result = await session.execute(
@@ -29,6 +30,7 @@ async def list_stored_jobs(
             (Portal.user_id == user_id) | (Portal.user_id.is_(None)),
         )
         .order_by(StoredJob.scraped_at.desc())
+        .offset(offset)
         .limit(limit)
     )
     jobs = result.scalars().all()

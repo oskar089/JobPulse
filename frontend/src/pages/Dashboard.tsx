@@ -1,7 +1,6 @@
 import { useState, useCallback } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
 import { Card } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
 import { runPipeline, getLatestPipelineRuns, cancelPipeline } from "../lib/pipeline";

@@ -30,12 +30,16 @@ class NotificationResponse(BaseModel):
 async def list_notifications(
     user_id: str = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_session),
+    limit: int = 50,
+    offset: int = 0,
 ):
     """List the current user's notifications, newest first."""
     result = await session.execute(
         select(Notification)
         .where(Notification.user_id == user_id)
-        .order_by(Notification.sent_at.desc()),
+        .order_by(Notification.sent_at.desc())
+        .offset(offset)
+        .limit(limit),
     )
     return result.scalars().all()
 
