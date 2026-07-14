@@ -426,6 +426,46 @@ class TestAccessTokenExpiry:
         assert timedelta(minutes=14) <= diff <= timedelta(minutes=16)
 
 
+# ---------------------------------------------------------------------------
+# Task 2.1: JWT role claim in tokens
+# ---------------------------------------------------------------------------
+
+
+class TestTokenRoleClaim:
+    """create_access_token and create_refresh_token must include role claim."""
+
+    def test_access_token_includes_role_admin(self):
+        """Access token with role='admin' includes role claim in payload."""
+        token = create_access_token(subject="admin-user-123", role="admin")
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        assert payload["sub"] == "admin-user-123"
+        assert payload["role"] == "admin"
+
+    def test_access_token_includes_role_user(self):
+        """Access token with role='user' includes role claim in payload."""
+        token = create_access_token(subject="regular-user-456", role="user")
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        assert payload["role"] == "user"
+
+    def test_access_token_default_role_is_user(self):
+        """Access token without explicit role defaults to 'user'."""
+        token = create_access_token(subject="default-role-user")
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        assert payload["role"] == "user"
+
+    def test_refresh_token_includes_role_admin(self):
+        """Refresh token with role='admin' includes role claim in payload."""
+        token = create_refresh_token(subject="admin-user-789", role="admin")
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        assert payload["role"] == "admin"
+
+    def test_refresh_token_includes_role_user(self):
+        """Refresh token with role='user' includes role claim in payload."""
+        token = create_refresh_token(subject="regular-user-012", role="user")
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        assert payload["role"] == "user"
+
+
 class TestCookieDualAuth:
     """Both cookie and Bearer header must work simultaneously."""
 

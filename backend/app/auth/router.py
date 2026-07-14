@@ -168,8 +168,8 @@ async def register(
     session.add(user)
     await session.flush()
 
-    access = create_access_token(user.id)
-    refresh = create_refresh_token(user.id)
+    access = create_access_token(user.id, role=user.role)
+    refresh = create_refresh_token(user.id, role=user.role)
 
     _set_access_token_cookie(response, access)
     return TokenResponse(access_token=access, refresh_token=refresh)
@@ -211,8 +211,8 @@ async def login(
     # Successful login — clear lockout
     await clear_lockout(user.id)
 
-    access = create_access_token(user.id)
-    refresh = create_refresh_token(user.id)
+    access = create_access_token(user.id, role=user.role)
+    refresh = create_refresh_token(user.id, role=user.role)
 
     _set_access_token_cookie(response, access)
     return TokenResponse(access_token=access, refresh_token=refresh)
@@ -335,8 +335,8 @@ async def refresh_token(
     await blacklist_refresh_token(user_id, body.refresh_token, REFRESH_TOKEN_TTL)
 
     # Issue new tokens
-    new_access = create_access_token(user_id)
-    new_refresh = create_refresh_token(user_id)
+    new_access = create_access_token(user_id, role=user.role)
+    new_refresh = create_refresh_token(user_id, role=user.role)
 
     _set_access_token_cookie(response, new_access)
     return TokenResponse(access_token=new_access, refresh_token=new_refresh)
