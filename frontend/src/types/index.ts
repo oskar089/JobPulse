@@ -2,6 +2,51 @@ export interface UserResponse {
   id: string;
   email: string;
   name: string | null;
+  role: string;
+}
+
+// ---------------------------------------------------------------------------
+// Admin types
+// ---------------------------------------------------------------------------
+
+export interface AdminAnalytics {
+  pipeline: {
+    total_runs: number;
+    success_rate: number;
+    completed: number;
+    failed: number;
+  };
+  jobs: {
+    total_scraped: number;
+    by_portal: Record<string, Array<{ date: string; count: number }>>;
+  };
+  applications: {
+    total_submitted: number;
+    timeseries: Array<{ date: string; count: number }>;
+  };
+  portals: Array<{
+    portal_name: string;
+    jobs_found: number;
+    applications_submitted: number;
+    success_rate: number;
+  }>;
+  conversion_rate: number;
+  window: string;
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  name: string | null;
+  role: string;
+  created_at: string;
+}
+
+export interface UserListResponse {
+  users: AdminUser[];
+  total: number;
+  page: number;
+  pages: number;
 }
 
 export interface LoginRequest {
