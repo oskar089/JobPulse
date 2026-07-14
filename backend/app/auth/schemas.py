@@ -1,5 +1,7 @@
 import re
 
+from typing import Literal
+
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
@@ -66,3 +68,67 @@ class UserResponse(BaseModel):
     role: str = "user"
 
     model_config = {"from_attributes": True}
+
+
+# ---------------------------------------------------------------------------
+# Admin schemas
+# ---------------------------------------------------------------------------
+
+
+class AdminUserResponse(BaseModel):
+    id: str
+    email: str
+    name: str | None = None
+    role: str
+    created_at: str
+
+    model_config = {"from_attributes": True}
+
+
+class UserListResponse(BaseModel):
+    users: list[AdminUserResponse]
+    total: int
+    page: int
+    pages: int
+
+
+class RoleUpdateRequest(BaseModel):
+    role: Literal["user", "admin"]
+
+
+class PortalTimeSeries(BaseModel):
+    date: str
+    count: int
+
+
+class PipelineMetrics(BaseModel):
+    total_runs: int
+    success_rate: float
+    completed: int
+    failed: int
+
+
+class JobsMetrics(BaseModel):
+    total_scraped: int
+    by_portal: dict[str, list[PortalTimeSeries]]
+
+
+class ApplicationsMetrics(BaseModel):
+    total_submitted: int
+    timeseries: list[PortalTimeSeries]
+
+
+class PortalPerformance(BaseModel):
+    portal_name: str
+    jobs_found: int
+    applications_submitted: int
+    success_rate: float
+
+
+class AnalyticsResponse(BaseModel):
+    pipeline: PipelineMetrics
+    jobs: JobsMetrics
+    applications: ApplicationsMetrics
+    portals: list[PortalPerformance]
+    conversion_rate: float
+    window: str

@@ -19,6 +19,7 @@ from app.notifications.router import router as notifications_router
 from app.pipeline.router import router as pipeline_router
 from app.portals.router import router as portals_router
 from app.profiles.router import router as profiles_router
+from app.routers.admin import router as admin_router
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ app.include_router(profiles_router, prefix=settings.api_prefix)
 app.include_router(pipeline_router, prefix=settings.api_prefix)
 app.include_router(jobs_router, prefix=settings.api_prefix)
 app.include_router(notifications_router, prefix=settings.api_prefix)
+app.include_router(admin_router, prefix=settings.api_prefix)
 
 
 @app.get("/health")

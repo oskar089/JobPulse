@@ -123,6 +123,32 @@ async def get_current_user_id(token: str = Depends(get_token)) -> str:
     return user_id
 
 
+async def require_admin(token: str = Depends(get_token)) -> str:
+    """Extract role from JWT claim, raise 403 if not admin.
+
+    Returns the user_id on success.
+    """
+    payload = decode_access_token(token)
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+    role = payload.get("role", "user")
+    if role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    user_id = payload.get("sub")
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload",
+        )
+    return user_id
+
+
 # ---------------------------------------------------------------------------
 # Token helpers
 # ---------------------------------------------------------------------------
