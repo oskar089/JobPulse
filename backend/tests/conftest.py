@@ -116,14 +116,15 @@ async def test_user(db_session: AsyncSession):
     pwd_hash = hash_password("testpass123")
     await db_session.execute(
         text(
-            "INSERT INTO \"user\" (id, email, name, password_hash) "
-            "VALUES (:id, :email, :name, :password_hash)"
+            "INSERT INTO \"user\" (id, email, name, password_hash, role) "
+            "VALUES (:id, :email, :name, :password_hash, :role)"
         ),
         {
             "id": user_id,
             "email": email,
             "name": "Test User",
             "password_hash": pwd_hash,
+            "role": "user",
         },
     )
     await db_session.commit()
