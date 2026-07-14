@@ -49,6 +49,9 @@ uploads/
 
 # LinkedIn auth session (cookies — do not commit)
 linkedin_auth.json
+*auth*.json
+*session*.json
+*cookies*.json
 
 # Test database
 backend/test.db
