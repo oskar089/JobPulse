@@ -4,18 +4,24 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "../context/AuthContext";
 import { cn } from "../lib/utils";
 import { listNotifications } from "../lib/notifications";
-import { LayoutDashboard, User, Globe, Briefcase, Bell, LogOut } from "lucide-react";
+import { LayoutDashboard, User, Globe, Briefcase, Bell, LogOut, Shield } from "lucide-react";
 
-const navItems = [
-  { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard, disabled: false },
-  { label: "Profile", path: "/profile", icon: User, disabled: false },
-  { label: "Portals", path: "/portals", icon: Globe, disabled: false },
-  { label: "Applications", path: "/applications", icon: Briefcase, disabled: false },
-  { label: "Notifications", path: "/notifications", icon: Bell, disabled: false },
-];
+function useNavItems(userRole?: string) {
+  return [
+    { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard, disabled: false },
+    { label: "Profile", path: "/profile", icon: User, disabled: false },
+    { label: "Portals", path: "/portals", icon: Globe, disabled: false },
+    { label: "Applications", path: "/applications", icon: Briefcase, disabled: false },
+    { label: "Notifications", path: "/notifications", icon: Bell, disabled: false },
+    ...(userRole === "admin"
+      ? [{ label: "Admin", path: "/admin", icon: Shield, disabled: false }]
+      : []),
+  ];
+}
 
 export function Layout() {
   const { user, isAuthenticated, isLoading, logout } = useAuth();
+  const navItems = useNavItems(user?.role);
   const navigate = useNavigate();
   const location = useLocation();
 

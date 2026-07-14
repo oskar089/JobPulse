@@ -10,6 +10,9 @@ import Profile from "./pages/Profile";
 import Portals from "./pages/Portals";
 import Applications from "./pages/Applications";
 import Notifications from "./pages/Notifications";
+import AdminDashboard from "./pages/AdminDashboard";
+import AdminUsers from "./pages/AdminUsers";
+import { AdminRoute } from "./components/AdminRoute";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -35,6 +38,10 @@ export function App() {
               <Route path="/portals" element={<Portals />} />
               <Route path="/applications" element={<Applications />} />
               <Route path="/notifications" element={<Notifications />} />
+              <Route element={<AdminRoute />}>
+                <Route path="/admin" element={<AdminDashboard />} />
+                <Route path="/admin/users" element={<AdminUsers />} />
+              </Route>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
             </Route>
           </Routes>
