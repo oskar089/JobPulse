@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, DateTime, func
+from sqlalchemy import DateTime, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -19,6 +19,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    role: Mapped[str] = mapped_column(String(20), default="user", nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -28,11 +29,27 @@ class User(Base):
     )
 
     # Relationships
-    profile: Mapped["Profile | None"] = relationship("Profile", back_populates="user", uselist=False)  # type: ignore[name-defined]  # noqa: F821
-    portals: Mapped[list["Portal"]] = relationship("Portal", back_populates="user")  # type: ignore[name-defined]  # noqa: F821
-    applications: Mapped[list["Application"]] = relationship("Application", back_populates="user")  # type: ignore[name-defined]  # noqa: F821
-    notifications: Mapped[list["Notification"]] = relationship("Notification", back_populates="user")  # type: ignore[name-defined]  # noqa: F821
-    pipeline_runs: Mapped[list["PipelineRun"]] = relationship("PipelineRun", back_populates="user")  # type: ignore[name-defined]  # noqa: F821
+    profile: Mapped["Profile | None"] = relationship(  # noqa: F821
+        "Profile", back_populates="user", uselist=False
+    )  # type: ignore[name-defined]
+    portals: Mapped[list["Portal"]] = relationship(  # noqa: F821
+        "Portal", back_populates="user"
+    )  # type: ignore[name-defined]
+    applications: Mapped[list["Application"]] = relationship(  # noqa: F821
+        "Application", back_populates="user"
+    )  # type: ignore[name-defined]
+    notifications: Mapped[list["Notification"]] = relationship(  # noqa: F821
+        "Notification", back_populates="user"
+    )  # type: ignore[name-defined]
+    pipeline_runs: Mapped[list["PipelineRun"]] = relationship(  # noqa: F821
+        "PipelineRun", back_populates="user"
+    )  # type: ignore[name-defined]
+    curricula_vitae: Mapped[list["CurriculumVitae"]] = relationship(  # noqa: F821
+        "CurriculumVitae", back_populates="user"
+    )  # type: ignore[name-defined]
+    scrape_sessions: Mapped[list["ScrapeSession"]] = relationship(  # noqa: F821
+        "ScrapeSession", back_populates="user"
+    )  # type: ignore[name-defined]
 
     def __repr__(self) -> str:
         return f"<User {self.email}>"

@@ -39,3 +39,22 @@ htmlcov/
 
 # Docker
 .docker/
+
+# Uploads (CVs, user files)
+uploads/
+
+# Cache
+.pytest_cache/
+.atl/.skill-registry.cache.json
+
+# LinkedIn auth session (cookies — do not commit)
+linkedin_auth.json
+*auth*.json
+*session*.json
+*cookies*.json
+
+# Test database
+backend/test.db
+
+# Build artifacts
+*.tsbuildinfo

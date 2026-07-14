@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+
+# Secrets & env
+.env
+.env.local
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Git
+.git/
+.gitignore
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+.coverage.*
+
+# Pytest
+.pytest_cache/
+
+# Alembic / SQLite
+*.sqlite3
+
+# Docker (prevent sending docker files to build context)
+.docker/
+
+# Uploaded CVs (backup, not needed for build)
+uploads/
+
+# Project-specific
+start.ps1

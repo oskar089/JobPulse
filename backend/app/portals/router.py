@@ -1,0 +1,258 @@
+import ipaddress
+import logging
+from typing import Any
+from urllib.parse import urlparse
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth.router import get_current_user_id
+from app.database import get_session
+from app.middleware.rate_limit import limiter
+from app.models import Portal
+from app.portals.schemas import PortalCreate, PortalResponse, PortalUpdate
+from app.scrapers.engine import PortalSelectors as EngineSelectors
+from app.scrapers.engine import ScraperEngine
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/portals", tags=["portals"])
+
+
+async def _get_portal_or_404(
+    portal_id: str,
+    session: AsyncSession,
+) -> Portal:
+    """Fetch a portal by ID or raise 404."""
+    result = await session.execute(select(Portal).where(Portal.id == portal_id))
+    portal = result.scalar_one_or_none()
+    if portal is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Portal not found",
+        )
+    return portal
+
+
+def _assert_owner(portal: Portal, user_id: str) -> None:
+    """Raise 403 if the current user does not own the portal."""
+    if portal.is_builtin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Built-in portals cannot be modified",
+        )
+    if portal.user_id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not own this portal",
+        )
+
+
+@router.get("", response_model=list[PortalResponse])
+async def list_portals(
+    user_id: str = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """List the current user's portals and all built-in portals, deduplicated by name.
+
+    If a user created their own portal with the same name as a built-in one,
+    the user's version wins (they may have customized selectors).
+    """
+    result = await session.execute(
+        select(Portal).where(
+            or_(
+                Portal.user_id == user_id,
+                Portal.user_id.is_(None),
+            ),
+        ).order_by(Portal.name),
+    )
+    portals = result.scalars().all()
+
+    # Deduplicate by name: user-owned portals override built-in ones
+    seen: dict[str, Portal] = {}
+    for p in portals:
+        if p.name in seen:
+            # If the existing entry is built-in and this one is user-owned, swap
+            existing = seen[p.name]
+            if existing.is_builtin and not p.is_builtin:
+                seen[p.name] = p
+            # Otherwise keep the first one (both built-in or both user-owned)
+        else:
+            seen[p.name] = p
+
+    return list(seen.values())
+
+
+@router.post("", response_model=PortalResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
+async def create_portal(
+    request: Request,
+    body: PortalCreate,
+    user_id: str = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Create a new portal configuration for the current user."""
+    portal = Portal(
+        user_id=user_id,
+        name=body.name,
+        base_url=body.base_url,
+        job_listing_url=body.job_listing_url,
+        selectors=body.selectors.model_dump(),
+        scrape_interval_min=body.scrape_interval_min,
+    )
+    session.add(portal)
+    await session.flush()
+    return portal
+
+
+@router.get("/{portal_id}", response_model=PortalResponse)
+async def get_portal(
+    portal_id: str,
+    session: AsyncSession = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Get a single portal configuration by ID."""
+    portal = await _get_portal_or_404(portal_id, session)
+    _assert_owner(portal, user_id)
+    return portal
+
+
+@router.put("/{portal_id}", response_model=PortalResponse)
+async def update_portal(
+    portal_id: str,
+    body: PortalUpdate,
+    user_id: str = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update a portal configuration (owner only)."""
+    portal = await _get_portal_or_404(portal_id, session)
+    _assert_owner(portal, user_id)
+
+    update_data = body.model_dump(exclude_unset=True)
+    if "selectors" in update_data and body.selectors is not None:
+        update_data["selectors"] = body.selectors.model_dump()
+
+    for field, value in update_data.items():
+        setattr(portal, field, value)
+
+    await session.flush()
+    return portal
+
+
+@router.delete("/{portal_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_portal(
+    portal_id: str,
+    user_id: str = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Delete a portal configuration (owner only)."""
+    portal = await _get_portal_or_404(portal_id, session)
+    _assert_owner(portal, user_id)
+
+    await session.delete(portal)
+    await session.flush()
+
+
+@router.patch("/{portal_id}/toggle", response_model=PortalResponse)
+async def toggle_portal(
+    portal_id: str,
+    user_id: str = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Toggle the enabled/disabled state of a portal (owner only)."""
+    portal = await _get_portal_or_404(portal_id, session)
+    _assert_owner(portal, user_id)
+
+    portal.is_enabled = not portal.is_enabled
+    await session.flush()
+    return portal
+
+
+@router.post("/{portal_id}/dry-run")
+async def dry_run_portal(
+    portal_id: str,
+    test_url: str | None = Query(
+        default=None,
+        description="Override the portal's job_listing_url for this test run",
+    ),
+    user_id: str = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Run a dry‑run scrape against a portal and return parsed jobs without persisting.
+
+    Accepts an optional `test_url` query parameter to override the portal's
+    configured `job_listing_url` — useful for testing with a different search
+    or a local HTML fixture.
+    """
+    portal = await _get_portal_or_404(portal_id, session)
+    _assert_owner(portal, user_id)
+
+    # Validate test_url against SSRF attacks
+    if test_url:
+        parsed = urlparse(test_url)
+        if parsed.scheme not in ("http", "https"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid URL scheme. Only http and https are allowed.",
+            )
+        try:
+            addr = ipaddress.ip_address(parsed.hostname)
+            if addr.is_private or addr.is_loopback or addr.is_link_local:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="URL points to a private or reserved IP address.",
+                )
+        except ValueError:
+            pass  # hostname is a domain name, not an IP — OK
+
+    # Build engine‑compatible selectors from the stored JSON
+    raw: dict[str, Any] = portal.selectors
+    selectors = EngineSelectors(
+        job_card=raw.get("job_card", ""),
+        title=raw.get("title", ""),
+        company=raw.get("company", ""),
+        location=raw.get("location"),
+        description=raw.get("description", ""),
+        url=raw.get("url", ""),
+        salary=raw.get("salary"),
+        posted_date=raw.get("posted_date"),
+        apply_button=raw.get("apply_button"),
+    )
+
+    url = test_url or portal.job_listing_url
+
+    try:
+        async with ScraperEngine(headless=True, timeout=30000) as engine:
+            jobs = await engine.dry_run(url, selectors)
+    except Exception as exc:
+        logger.error("Dry-run failed for portal %s: %s", portal_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Dry-run scrape failed. Check the portal configuration and URL.",
+        ) from exc
+
+    if not jobs:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Dry-run returned zero results. Check your selectors or the portal URL.",
+        )
+
+    return {
+        "portal_id": portal_id,
+        "portal_name": portal.name,
+        "url": url,
+        "jobs": [
+            {
+                "title": j.title,
+                "company": j.company,
+                "location": j.location,
+                "description": j.description[:500] if j.description else "",
+                "url": j.url,
+                "salary_range": j.salary_range,
+                "posted_at": j.posted_at,
+            }
+            for j in jobs
+        ],
+        "total": len(jobs),
+    }

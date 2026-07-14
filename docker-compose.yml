@@ -1,0 +1,310 @@
+# =============================================================================
+#  Search Jobs — Docker Compose
+#  Backend: FastAPI + Celery | Frontend: React/Vite | DB: PostgreSQL 16
+# =============================================================================
+#
+#  Quick start:
+#    docker compose up -d
+#
+#  With Celery Beat (periodic tasks):
+#    docker compose --profile beat up -d
+#
+#  Stop everything:
+#    docker compose down -v        # also removes volumes
+#    docker compose down           # keeps volumes
+#
+#  Environment variables can be set via .env file in project root.
+# =============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # PostgreSQL 16 — primary database (internal network only)
+  # --------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    expose:
+      - "5432"
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:?Set POSTGRES_USER in .env}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
+      POSTGRES_DB: "${POSTGRES_DB:-searchjobs}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-searchjobs}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: "512M"
+    networks:
+      - internal
+
+  # --------------------------------------------------------------------------
+  # Redis 7 — Celery broker & result backend (internal network only)
+  # --------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: "256M"
+    networks:
+      - internal
+
+  # --------------------------------------------------------------------------
+  # Backend — FastAPI (Uvicorn)
+  # --------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Override connection strings for Docker networking
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-searchjobs}"
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+
+      # App config (override via .env)
+      APP_NAME: "${APP_NAME:-JobPulse}"
+      APP_ENV: "${APP_ENV:-development}"
+      DEBUG: "${DEBUG:-true}"
+      API_PREFIX: "${API_PREFIX:-/api}"
+      APP_URL: "${APP_URL:-http://localhost:5173}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:5173}"
+
+      # Auth
+      JWT_SECRET: "${JWT_SECRET}"
+      JWT_ALGORITHM: "${JWT_ALGORITHM:-HS256}"
+      JWT_EXPIRES_IN_MINUTES: "${JWT_EXPIRES_IN_MINUTES:-10080}"
+
+      # Redis auth
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
+
+      # LLM / OpenAI
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_MODEL: "${LLM_MODEL:-gpt-4}"
+      LLM_API_URL: "${LLM_API_URL:-https://api.openai.com/v1/chat/completions}"
+
+      # Resume matching
+      MATCH_THRESHOLD: "${MATCH_THRESHOLD:-75}"
+
+      # LinkedIn scraper
+      LINKEDIN_API_KEY: "${LINKEDIN_API_KEY:-}"
+      LINKEDIN_API_URL: "${LINKEDIN_API_URL:-https://api.scrapin.io}"
+      LINKEDIN_EMAIL: "${LINKEDIN_EMAIL:-}"
+      LINKEDIN_PASSWORD: "${LINKEDIN_PASSWORD:-}"
+
+      # File uploads
+      UPLOAD_DIR: "/app/uploads/cv"
+
+      # SMTP (email notifications)
+      SMTP_HOST: "${SMTP_HOST:-}"
+      SMTP_PORT: "${SMTP_PORT:-587}"
+      SMTP_USER: "${SMTP_USER:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+      SMTP_FROM: "${SMTP_FROM:-noreply@searchjobs.app}"
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "512M"
+    networks:
+      - internal
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  # --------------------------------------------------------------------------
+  # Celery Worker — async task processing (scraping, matching, notifications)
+  # --------------------------------------------------------------------------
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-searchjobs}"
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+
+      APP_NAME: "${APP_NAME:-Search Jobs}"
+      APP_ENV: "${APP_ENV:-development}"
+      DEBUG: "${DEBUG:-false}"
+      API_PREFIX: "${API_PREFIX:-/api}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:5173}"
+
+      JWT_SECRET: "${JWT_SECRET}"
+      JWT_ALGORITHM: "${JWT_ALGORITHM:-HS256}"
+      JWT_EXPIRES_IN_MINUTES: "${JWT_EXPIRES_IN_MINUTES:-10080}"
+
+      # Redis auth
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
+
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_MODEL: "${LLM_MODEL:-gpt-4}"
+      LLM_API_URL: "${LLM_API_URL:-https://api.openai.com/v1/chat/completions}"
+
+      MATCH_THRESHOLD: "${MATCH_THRESHOLD:-75}"
+
+      LINKEDIN_API_KEY: "${LINKEDIN_API_KEY:-}"
+      LINKEDIN_API_URL: "${LINKEDIN_API_URL:-https://api.scrapin.io}"
+      LINKEDIN_EMAIL: "${LINKEDIN_EMAIL:-}"
+      LINKEDIN_PASSWORD: "${LINKEDIN_PASSWORD:-}"
+
+      UPLOAD_DIR: "/app/uploads/cv"
+
+      SMTP_HOST: "${SMTP_HOST:-}"
+      SMTP_PORT: "${SMTP_PORT:-587}"
+      SMTP_USER: "${SMTP_USER:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+      SMTP_FROM: "${SMTP_FROM:-noreply@searchjobs.app}"
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.celery_app inspect ping >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: "1G"
+    networks:
+      - internal
+    # prefork pool uses multiple CPU cores — best for Linux Docker hosts
+    command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--pool=prefork"]
+
+  # --------------------------------------------------------------------------
+  # Celery Beat — periodic task scheduler (opt-in via --profile beat)
+  # --------------------------------------------------------------------------
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    profiles:
+      - beat
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-searchjobs}"
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+
+      APP_NAME: "${APP_NAME:-Search Jobs}"
+      APP_ENV: "${APP_ENV:-development}"
+      DEBUG: "${DEBUG:-false}"
+
+      JWT_SECRET: "${JWT_SECRET}"
+
+      # Redis auth
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
+
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_MODEL: "${LLM_MODEL:-gpt-4}"
+
+      MATCH_THRESHOLD: "${MATCH_THRESHOLD:-75}"
+
+      UPLOAD_DIR: "/app/uploads/cv"
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'celery.*beat' >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: "256M"
+    networks:
+      - internal
+    command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
+
+  # --------------------------------------------------------------------------
+  # Frontend — React / Vite (production build served by nginx)
+  # --------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: "128M"
+    networks:
+      - internal
+
+# ----------------------------------------------------------------------------
+#  Networks
+# ----------------------------------------------------------------------------
+networks:
+  internal:
+    driver: bridge
+    internal: false   # allows outbound internet access (LLM APIs, scrapers)
+    name: search_jobs_internal
+
+# ----------------------------------------------------------------------------
+#  Named volumes
+# ----------------------------------------------------------------------------
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  uploads:
+    driver: local

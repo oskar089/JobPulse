@@ -1,4 +1,93 @@
-from pydantic import BaseModel
+from datetime import datetime
+
+from pydantic import BaseModel, Field, HttpUrl, field_validator
+
+# ---------------------------------------------------------------------------
+# Import / CV item schemas
+# ---------------------------------------------------------------------------
+
+
+class SkillItem(BaseModel):
+    name: str
+    level: str = "intermediate"  # beginner | intermediate | advanced | expert
+
+    @field_validator("level", mode="before")
+    @classmethod
+    def _default_none_level(cls, v: object) -> str:
+        """Some LLMs (e.g. Gemma) return ``null`` for level — default to intermediate."""
+        if v is None or v == "":
+            return "intermediate"
+        return str(v)
+
+
+class EducationItem(BaseModel):
+    institution: str
+    degree: str
+    field: str | None = None
+    start_date: str
+    end_date: str | None = None
+    description: str | None = None
+
+
+class ExperienceItem(BaseModel):
+    company: str
+    role: str
+    start_date: str = ""
+    end_date: str | None = None
+    description: str | None = None
+    location: str | None = None
+    current: bool = False
+
+
+class ImportedProfile(BaseModel):
+    """Full structured profile from an external source (LinkedIn / Infojobs / CV)."""
+
+    headline: str | None = None
+    summary: str | None = None
+    skills: list[SkillItem] = []
+    education: list[EducationItem] = []
+    work_experience: list[ExperienceItem] = []
+    linkedin_url: str | None = None
+    infojobs_url: str | None = None
+
+
+class CVParseResult(BaseModel):
+    """Result of parsing a CV upload."""
+
+    id: str
+    file_name: str
+    file_size: int
+    parsed_data: ImportedProfile
+
+
+class ImportUrlRequest(BaseModel):
+    """Request body containing a URL to import."""
+
+    url: HttpUrl = Field(max_length=2048)
+
+
+class MergeRequest(BaseModel):
+    """Request body for the preview-save merge endpoint."""
+
+    preview_data: ImportedProfile
+    strategy: str = "fill-empty"
+
+
+class CVResponse(BaseModel):
+    """Metadata response for a stored CurriculumVitae."""
+
+    id: str
+    user_id: str
+    filename: str
+    file_size: int
+    uploaded_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+# ---------------------------------------------------------------------------
+# Profile response / update schemas (extended with import fields)
+# ---------------------------------------------------------------------------
 
 
 class ProfileResponse(BaseModel):
@@ -14,6 +103,16 @@ class ProfileResponse(BaseModel):
     languages: list[str] = []
     is_active: bool = True
 
+    # Profile import / CV fields
+    headline: str | None = None
+    summary: str | None = None
+    skills: list[SkillItem] | None = None
+    education: list[EducationItem] | None = None
+    work_experience: list[ExperienceItem] | None = None
+    linkedin_url: str | None = None
+    infojobs_url: str | None = None
+    cv_file_url: str | None = None
+
     model_config = {"from_attributes": True}
 
 
@@ -27,3 +126,13 @@ class ProfileUpdate(BaseModel):
     remote_only: bool | None = None
     languages: list[str] | None = None
     is_active: bool | None = None
+
+    # Profile import / CV fields
+    headline: str | None = None
+    summary: str | None = None
+    skills: list[SkillItem] | None = None
+    education: list[EducationItem] | None = None
+    work_experience: list[ExperienceItem] | None = None
+    linkedin_url: str | None = None
+    infojobs_url: str | None = None
+    cv_file_url: str | None = None
