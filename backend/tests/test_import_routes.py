@@ -90,16 +90,18 @@ class TestImportLinkedIn:
     ):
         """Import from a valid LinkedIn URL returns ``ImportedProfile``."""
         self._API_KEY_PATCH.start()
-        with patch(
-            "app.profiles.linkedin_importer.LinkedInImporter.import_profile",
-            new=AsyncMock(return_value=_MOCK_IMPORTED_PROFILE),
-        ):
-            resp = await async_client.post(
-                "/api/profiles/import/linkedin",
-                json={"url": "https://linkedin.com/in/testuser"},
-                headers=auth_headers,
-            )
-        self._API_KEY_PATCH.stop()
+        try:
+            with patch(
+                "app.profiles.linkedin_importer.LinkedInImporter.import_profile",
+                new=AsyncMock(return_value=_MOCK_IMPORTED_PROFILE),
+            ):
+                resp = await async_client.post(
+                    "/api/profiles/import/linkedin",
+                    json={"url": "https://linkedin.com/in/testuser"},
+                    headers=auth_headers,
+                )
+        finally:
+            self._API_KEY_PATCH.stop()
 
         assert resp.status_code == 200
         body = resp.json()
@@ -121,12 +123,14 @@ class TestImportLinkedIn:
     ):
         """Import with a URL that does not contain 'linkedin.com' returns 422."""
         self._API_KEY_PATCH.start()
-        resp = await async_client.post(
-            "/api/profiles/import/linkedin",
-            json={"url": "https://example.com"},
-            headers=auth_headers,
-        )
-        self._API_KEY_PATCH.stop()
+        try:
+            resp = await async_client.post(
+                "/api/profiles/import/linkedin",
+                json={"url": "https://example.com"},
+                headers=auth_headers,
+            )
+        finally:
+            self._API_KEY_PATCH.stop()
 
         assert resp.status_code == 422
         assert "Invalid LinkedIn URL" in resp.json()["detail"]
@@ -138,20 +142,22 @@ class TestImportLinkedIn:
     ):
         """Import when the LinkedIn API returns an HTTP error returns 502."""
         self._API_KEY_PATCH.start()
-        with patch(
-            "app.profiles.linkedin_importer.LinkedInImporter.import_profile",
-            new=AsyncMock(
-                side_effect=ValueError(
-                    "LinkedIn API error: HTTP 500. Could not fetch profile.",
+        try:
+            with patch(
+                "app.profiles.linkedin_importer.LinkedInImporter.import_profile",
+                new=AsyncMock(
+                    side_effect=ValueError(
+                        "LinkedIn API error: HTTP 500. Could not fetch profile.",
+                    ),
                 ),
-            ),
-        ):
-            resp = await async_client.post(
-                "/api/profiles/import/linkedin",
-                json={"url": "https://linkedin.com/in/testuser"},
-                headers=auth_headers,
-            )
-        self._API_KEY_PATCH.stop()
+            ):
+                resp = await async_client.post(
+                    "/api/profiles/import/linkedin",
+                    json={"url": "https://linkedin.com/in/testuser"},
+                    headers=auth_headers,
+                )
+        finally:
+            self._API_KEY_PATCH.stop()
 
         assert resp.status_code == 502
         assert "API error" in resp.json()["detail"]
@@ -163,20 +169,22 @@ class TestImportLinkedIn:
     ):
         """Import when the LinkedIn API times out returns 504."""
         self._API_KEY_PATCH.start()
-        with patch(
-            "app.profiles.linkedin_importer.LinkedInImporter.import_profile",
-            new=AsyncMock(
-                side_effect=ValueError(
-                    "LinkedIn API request timed out. Please try again.",
+        try:
+            with patch(
+                "app.profiles.linkedin_importer.LinkedInImporter.import_profile",
+                new=AsyncMock(
+                    side_effect=ValueError(
+                        "LinkedIn API request timed out. Please try again.",
+                    ),
                 ),
-            ),
-        ):
-            resp = await async_client.post(
-                "/api/profiles/import/linkedin",
-                json={"url": "https://linkedin.com/in/testuser"},
-                headers=auth_headers,
-            )
-        self._API_KEY_PATCH.stop()
+            ):
+                resp = await async_client.post(
+                    "/api/profiles/import/linkedin",
+                    json={"url": "https://linkedin.com/in/testuser"},
+                    headers=auth_headers,
+                )
+        finally:
+            self._API_KEY_PATCH.stop()
 
         assert resp.status_code == 504
         assert "timed out" in resp.json()["detail"]
@@ -444,7 +452,7 @@ class TestCVUpload:
         auth_headers: dict[str, str],
     ):
         """Upload a PDF larger than 10MB returns 422."""
-        large_content = b"x" * (10 * 1024 * 1024 + 1)
+        large_content = b"%PDF-1.4" + b"x" * (10 * 1024 * 1024 + 1)
         resp = await async_client.post(
             "/api/profiles/cv/upload",
             files={"file": ("large.pdf", large_content, "application/pdf")},

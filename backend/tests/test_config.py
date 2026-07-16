@@ -42,7 +42,7 @@ class TestSettingsPreservedBehavior:
         from app.config import Settings
 
         s = Settings(_env_file=None)
-        assert s.app_name == "Search Jobs"
+        assert s.app_name == "JobPulse"
         assert s.api_prefix == "/api"
         assert s.jwt_algorithm == "HS256"
         assert s.jwt_expires_in_minutes == 15
