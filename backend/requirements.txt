@@ -13,6 +13,7 @@ celery>=5.4.0
 redis>=5.2.0
 httpx>=0.28.0
 aiosmtplib>=3.0.0
+email-validator>=2.2.0
 playwright>=1.49.0
 playwright-stealth>=2.0.3
 beautifulsoup4>=4.12.0
