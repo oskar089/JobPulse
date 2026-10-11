@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main, develop]
 
+permissions:
+  contents: read
+
 env:
   # Backend
   PYTHON_VERSION: "3.12"
@@ -24,9 +27,12 @@ jobs:
         working-directory: ./backend
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
       - uses: astral-sh/setup-uv@v3
         with:
-          version: "latest"
+          version: "0.13.0"
       - name: Install dependencies
         run: uv sync --frozen --extra dev
       # The global baseline has unrelated violations; expand coverage separately.
@@ -41,9 +47,12 @@ jobs:
         working-directory: ./backend
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
       - uses: astral-sh/setup-uv@v3
         with:
-          version: "latest"
+          version: "0.13.0"
       - name: Install dependencies
         run: uv sync --frozen --extra dev
       # Skip imports outside the reviewed modules until baseline types are repaired.
@@ -58,7 +67,7 @@ jobs:
         working-directory: ./backend
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16.10-alpine3.22
         env:
           POSTGRES_USER: test
           POSTGRES_PASSWORD: test
@@ -70,7 +79,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       redis:
-        image: redis:7-alpine
+        image: redis:7.4.6-alpine3.21
         ports: ["6379:6379"]
         options: >-
           --health-cmd "redis-cli ping"
@@ -79,9 +88,12 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
       - uses: astral-sh/setup-uv@v3
         with:
-          version: "latest"
+          version: "0.13.0"
       - name: Install dependencies
         run: uv sync --frozen --extra dev
       - name: Set up test environment
@@ -113,6 +125,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
         run: npm ci
       - name: Run eslint
@@ -130,6 +143,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
         run: npm ci
       - name: Run typecheck
@@ -147,6 +161,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
         run: npm ci
       - name: Run unit tests
