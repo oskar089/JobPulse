@@ -108,7 +108,7 @@ jobs:
           REDIS_URL: redis://localhost:6379/0
           JWT_SECRET: test-secret-key-that-is-at-least-32-chars-long
           APP_ENV: development
-        run: uv run pytest -v --tb=short -q -m "not e2e"
+        run: uv run python -m pytest -v --tb=short -q -m "not e2e"
 
   # =========================================================================
   # FRONTEND
