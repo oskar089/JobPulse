@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -21,6 +22,8 @@ from app.profiles.schemas import (
     ProfileResponse,
     ProfileUpdate,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/profiles", tags=["profiles"])
 
@@ -97,7 +100,7 @@ async def import_linkedin(
             api_url=settings.linkedin_api_url,
         )
         try:
-            return await importer.import_profile(body.url)
+            return await importer.import_profile(str(body.url))
         except ValueError as e:
             msg = str(e)
             if msg.startswith("Invalid LinkedIn URL"):
@@ -121,13 +124,16 @@ async def import_linkedin(
             password=settings.linkedin_password,
         )
         try:
-            return await scraper.parse_profile(body.url)
+            return await scraper.parse_profile(str(body.url))
         except ValueError as e:
             msg = str(e)
             if "login" in msg.lower():
                 raise HTTPException(status_code=401, detail=msg)
             logger.error("LinkedIn scrape failed for URL %s: %s", body.url, e)
-            raise HTTPException(status_code=502, detail="LinkedIn scrape failed. Check the URL and try again.")
+            raise HTTPException(
+                status_code=502,
+                detail="LinkedIn scrape failed. Check the URL and try again.",
+            )
 
 
 @router.post("/import/infojobs", response_model=ImportedProfile)
@@ -140,7 +146,12 @@ async def import_infojobs(
     Returns parsed fields for the user to review before saving.
     """
     parsed = urlparse(str(body.url))
-    if parsed.netloc not in ("infojobs.com", "www.infojobs.com"):
+    if parsed.netloc not in (
+        "infojobs.com",
+        "www.infojobs.com",
+        "infojobs.com.ar",
+        "www.infojobs.com.ar",
+    ):
         raise HTTPException(
             status_code=422,
             detail=f"Invalid Infojobs URL: '{body.url}'. URL must be a valid infojobs.com URL.",
@@ -150,7 +161,7 @@ async def import_infojobs(
 
     scraper = InfojobsProfileScraper()
     try:
-        return await scraper.parse_profile(body.url)
+        return await scraper.parse_profile(str(body.url))
     except Exception as e:
         logger.error("Infojobs scrape failed for URL %s: %s", body.url, e)
         raise HTTPException(
