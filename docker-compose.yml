@@ -79,8 +79,12 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      # Keep local development access without exposing auth endpoints to the internet.
+      - "127.0.0.1:8000:8000"
     environment:
+      # The only public API ingress is Nginx, which overwrites forwarding headers.
+      # Other containers on this private Compose network are trusted peers.
+      FORWARDED_ALLOW_IPS: "*"
       # Override connection strings for Docker networking
       DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-searchjobs}"
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"

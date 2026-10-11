@@ -94,9 +94,15 @@ npm install && npm run dev
 
 ```bash
 cd backend
-pytest -v                    # Unit + integration
-pytest -v -m e2e             # E2E (requires frontend running)
-pytest --cov=app --cov-report=term-missing
+pytest -v -m "not e2e"     # Unit + integration without live services
+pytest -v -m e2e           # Browser E2E (requires frontend, backend and Chromium)
+pytest --cov=app --cov-report=term-missing -m "not e2e"
+
+cd ../frontend
+npm ci
+npm run lint
+npm run typecheck
+npm test
 ```
 
 ---
