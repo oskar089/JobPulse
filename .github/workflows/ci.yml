@@ -1,0 +1,183 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  # Backend
+  PYTHON_VERSION: "3.12"
+  # Frontend
+  NODE_VERSION: "20"
+
+jobs:
+  # =========================================================================
+  # BACKEND
+  # =========================================================================
+  backend-lint:
+    name: Backend - Reviewed paths lint (ruff)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev
+      # The global baseline has unrelated violations; expand coverage separately.
+      - name: Lint reviewed backend paths
+        run: uv run ruff check app/middleware/rate_limit.py app/profiles/router.py tests/test_rate_limiting.py tests/test_import_routes.py tests/test_config.py
+
+  backend-typecheck:
+    name: Backend - Reviewed modules typecheck (mypy)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev
+      # Skip imports outside the reviewed modules until baseline types are repaired.
+      - name: Typecheck reviewed backend modules
+        run: uv run mypy --follow-imports=skip app/middleware/rate_limit.py app/profiles/router.py
+
+  backend-test:
+    name: Backend - Tests (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: searchjobs
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U test -d searchjobs"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev
+      - name: Set up test environment
+        run: |
+          echo "DATABASE_URL=postgresql+asyncpg://test:test@localhost:5432/searchjobs" >> .env.test
+          echo "REDIS_URL=redis://localhost:6379/0" >> .env.test
+          echo "JWT_SECRET=test-secret-key-that-is-at-least-32-chars-long" >> .env.test
+          echo "APP_ENV=development" >> .env.test
+      - name: Run pytest
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/searchjobs
+          REDIS_URL: redis://localhost:6379/0
+          JWT_SECRET: test-secret-key-that-is-at-least-32-chars-long
+          APP_ENV: development
+        run: uv run pytest -v --tb=short -q -m "not e2e"
+
+  # =========================================================================
+  # FRONTEND
+  # =========================================================================
+  frontend-lint:
+    name: Frontend - Lint (eslint)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci
+      - name: Run eslint
+        run: npx eslint src --ext ts,tsx --max-warnings 0
+
+  frontend-typecheck:
+    name: Frontend - Typecheck (tsc)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci
+      - name: Run typecheck
+        run: npx tsc --noEmit
+
+  frontend-test:
+    name: Frontend - Tests (vitest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci
+      - name: Run unit tests
+        run: npm test
+
+  # =========================================================================
+  # SUMMARY
+  # =========================================================================
+  ci-summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs:
+      - backend-lint
+      - backend-typecheck
+      - backend-test
+      - frontend-lint
+      - frontend-typecheck
+      - frontend-test
+    if: always()
+    steps:
+      - name: Check job statuses
+        run: |
+          echo "All CI jobs completed."
+          # Fail if any needed job failed
+          if [[ "${{ needs.backend-lint.result }}" != "success" ]] ||
+             [[ "${{ needs.backend-typecheck.result }}" != "success" ]] ||
+             [[ "${{ needs.backend-test.result }}" != "success" ]] ||
+             [[ "${{ needs.frontend-lint.result }}" != "success" ]] ||
+             [[ "${{ needs.frontend-typecheck.result }}" != "success" ]] ||
+             [[ "${{ needs.frontend-test.result }}" != "success" ]]; then
+            echo "::error::One or more CI jobs failed"
+            exit 1
+          fi
+          echo "All checks passed"
