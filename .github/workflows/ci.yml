@@ -3,8 +3,8 @@ name: CI
 on:
   push:
     branches: [main, develop]
+  # Chain PRs target the tracker and prior child branches as well as main.
   pull_request:
-    branches: [main, develop]
 
 permissions:
   contents: read
