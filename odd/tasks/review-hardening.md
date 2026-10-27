@@ -1,0 +1,14 @@
+# Review hardening
+
+Objective: Resolve the concrete findings from the working-tree review and include only the pending feature prerequisites necessary for them in a review branch before any update to main.
+
+Scope: `backend/app/middleware/rate_limit.py`, `backend/tests/test_rate_limiting.py`, `backend/pyproject.toml`, `backend/uv.lock`, `docker-compose.yml`, `frontend/nginx.conf`, `frontend/package.json`, `frontend/package-lock.json`, `.github/workflows/ci.yml`, and only the direct prerequisites identified through verification. Preserve every pre-existing staged/unstaged change. No builds or live database access.
+
+Delivery boundary: User authorized necessary feature prerequisites in a separate review branch before main. Current `feat/admin-dashboard-frontend` has eight commits beyond `main` and extensive uncommitted work. Do not stage unrelated files, merge directly into main, or claim isolated corrections can work without their prerequisites. Lockfiles alone exceed normal review-size budget; report review load and keep commits coherent.
+
+- [ ] T1 (in progress): Prevent spoofed forwarding headers while preserving per-client limits behind Nginx by isolating backend ingress and configuring proxy trust; run focused backend tests and structural network checks. Commit only the cohesive work unit.
+- [ ] T2: Align frontend dependency lockfile with its manifest, add missing slowapi to uv project dependencies, and make CI installation reproducible; verify lockfile/CI checks without building. Commit only this work unit.
+- [ ] T3 (structurally verified; nginx -t unavailable; commit blocked): Remove unsupported Nginx directive and verify configuration by an available non-build check; commit only this work unit.
+- [ ] T4: Run applicable non-build regression checks, inspect staged work units, and prepare a narrowly scoped review branch; update main only after the review boundary is clear and checks succeed.
+
+Progress: T1 RED observed (spoofed header changed client key), GREEN 3 rate-limit tests passed; but using peer IP groups clients behind Nginx and the source contains pre-existing feature changes. T2 npm ci --dry-run and uv lock --check pass; commit blocked because package.json changes are pre-existing and necessary for the new lock. T3 unsupported directive removed; nginx -t unavailable without Docker daemon and existing Nginx file has prior uncommitted content. T4 blocked: full backend suite timed out at 180s after 90 passing markers; frontend Vitest unavailable; diff check reports a pre-existing trailing blank line in backend/tests/conftest.py. Remote main matches local main ca09686, which lacks these pending features. The regenerated frontend lockfile alone changes ~8,000 lines; review workload is high. No work-unit commits or publication yet; ask before broadening the agreed corrections-only publication scope.

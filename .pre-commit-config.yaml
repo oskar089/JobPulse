@@ -1,0 +1,100 @@
+# Pre-commit hooks configuration
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # ---------------------------------------------------------------------
+  # Python (Backend) - ruff, mypy, black
+  # ---------------------------------------------------------------------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: "v0.5.0"
+    hooks:
+      - id: ruff
+        name: Ruff check (lint)
+        args: ["--fix", "--exit-non-zero-on-fix"]
+        types_or: [python, pyi]
+      - id: ruff-format
+        name: Ruff format
+        types_or: [python, pyi]
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: "v1.10.0"
+    hooks:
+      - id: mypy
+        name: Mypy type check
+        additional_dependencies: [
+          "pydantic>=2.0",
+          "sqlalchemy>=2.0",
+          "fastapi>=0.110",
+          "alembic>=1.13",
+          "celery>=5.3",
+          "redis>=5.0",
+          "httpx>=0.27",
+          "pydantic-settings>=2.0",
+          "python-jose>=3.3",
+          "passlib>=1.7",
+          "bcrypt>=4.1",
+          "pdfplumber>=0.11",
+          "playwright>=1.40",
+          "aiosmtplib>=3.0",
+        ]
+        args: ["--strict", "--show-error-codes", "--pretty"]
+        types_or: [python, pyi]
+        exclude: ^tests/
+
+  # ---------------------------------------------------------------------
+  # TypeScript/JavaScript (Frontend) - eslint, prettier
+  # ---------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/mirrors-eslint
+    rev: "v9.10.0"
+    hooks:
+      - id: eslint
+        name: ESLint
+        types_or: [javascript, jsx, ts, tsx]
+        additional_dependencies:
+          - eslint@9.10.0
+          - "@typescript-eslint/parser@8.0.0"
+          - "@typescript-eslint/eslint-plugin@8.0.0"
+          - "eslint-plugin-react@7.37.0"
+          - "eslint-plugin-react-hooks@5.0.0"
+          - "eslint-plugin-jsx-a11y@6.10.0"
+        args: ["--max-warnings=0"]
+        exclude: ^frontend/node_modules/
+
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: "v4.0.0-alpha.8"
+    hooks:
+      - id: prettier
+        name: Prettier
+        types_or: [javascript, jsx, ts, tsx, json, yaml, markdown, css, html]
+        exclude: ^frontend/node_modules/
+
+  # ---------------------------------------------------------------------
+  # General - trailing whitespace, end-of-file, merge conflicts
+  # ---------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: "v5.0.0"
+    hooks:
+      - id: trailing-whitespace
+        name: Trim trailing whitespace
+      - id: end-of-file-fixer
+        name: Ensure files end with newline
+      - id: check-merge-conflict
+        name: Check for merge conflicts
+      - id: check-yaml
+        name: Validate YAML syntax
+      - id: check-json
+        name: Validate JSON syntax
+      - id: check-toml
+        name: Validate TOML syntax
+
+  # ---------------------------------------------------------------------
+  # Docker - hadolint
+  # ---------------------------------------------------------------------
+  - repo: https://github.com/hadolint/hadolint
+    rev: "v2.12.0"
+    hooks:
+      - id: hadolint
+        name: Hadolint (Dockerfile lint)
+        args: ["--ignore=DL3008", "--ignore=DL3013"]
+        files: "Dockerfile|dockerfile"

@@ -58,3 +58,8 @@ backend/test.db
 
 # Build artifacts
 *.tsbuildinfo
+
+# Local dev databases and tool caches
+*.db
+.ruff_cache/
+.pi/

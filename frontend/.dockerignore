@@ -1,0 +1,24 @@
+# Secrets & env
+.env
+.env.*
+
+# Dependencies and build output (rebuilt inside the image)
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Test artifacts
+coverage/
+test-results/
+playwright-report/
+
+# Logs
+*.log
+
+# VCS / IDE / OS
+.git/
+.gitignore
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

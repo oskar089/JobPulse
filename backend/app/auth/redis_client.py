@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Awaitable
-from typing import TypeVar
+from typing import Any
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
@@ -13,7 +13,6 @@ from redis.exceptions import RedisError
 from app.config import settings
 
 logger = logging.getLogger(__name__)
-T = TypeVar("T")
 
 
 class AuthStoreUnavailableError(RuntimeError):
@@ -25,11 +24,12 @@ async def get_redis() -> Redis:
     return Redis.from_url(settings.redis_url, decode_responses=True)
 
 
-async def _run_security_operation(operation: Awaitable[T] | T, description: str) -> T:
+async def _run_security_operation(operation: Awaitable[Any] | Any, description: str) -> Any:
     """Execute a Redis security operation and fail closed on outages.
 
     redis-py annotates its async commands as ``Awaitable[T] | T`` because the
-    same signatures serve the sync client, so both shapes are accepted here.
+    same signatures serve the sync client (and the annotations differ between
+    releases), so the result type is intentionally left open.
     """
     try:
         if isinstance(operation, Awaitable):
