@@ -22,7 +22,9 @@ def sanitize(text: str | None) -> str:
     return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
 
 
-@celery_app.task(bind=True, max_retries=3, default_retry_delay=60, acks_late=True, reject_on_worker_lost=True)
+@celery_app.task(
+    bind=True, max_retries=3, default_retry_delay=60, acks_late=True, reject_on_worker_lost=True
+)
 def scrape_portal(
     self,  # noqa: ARG001 — Celery task instance (used by .retry())
     portal_id: str,

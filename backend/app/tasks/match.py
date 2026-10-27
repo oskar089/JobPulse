@@ -15,7 +15,9 @@ from app.tasks import run_async
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(bind=True, max_retries=2, default_retry_delay=30, acks_late=True, reject_on_worker_lost=True)
+@celery_app.task(
+    bind=True, max_retries=2, default_retry_delay=30, acks_late=True, reject_on_worker_lost=True
+)
 def match_applications(
     self,  # noqa: ARG001
     user_id: str,
@@ -109,7 +111,10 @@ async def _match_applications(
             # Always log score (even below threshold) for analytics
             logger.info(
                 "Match: job=%s score=%.1f threshold=%.1f above=%s",
-                job.id, score, threshold, score >= threshold,
+                job.id,
+                score,
+                threshold,
+                score >= threshold,
             )
 
         pipeline.steps = {
@@ -125,6 +130,8 @@ async def _match_applications(
 
     logger.info(
         "Matched %d jobs — %d applications created (threshold=%.1f)",
-        len(scored), created, threshold,
+        len(scored),
+        created,
+        threshold,
     )
     return {"status": "completed", "jobs_scored": len(scored), "applications_created": created}

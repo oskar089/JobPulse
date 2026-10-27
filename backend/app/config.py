@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     )
 
     # App
-    app_name: str = "JobPulse"
+    app_name: str = "Search Jobs"
     app_env: Literal["development", "staging", "production"] = "development"
     debug: bool = False
     api_prefix: str = "/api"
@@ -40,6 +40,9 @@ class Settings(BaseSettings):
 
     # Redis (Celery) — REQUIRED, no default
     redis_url: str
+
+    # Rate limiting — use a Redis URL so limits are shared across workers
+    rate_limit_storage_uri: str = "memory://"
 
     # LLM
     llm_api_key: str = ""
@@ -64,6 +67,12 @@ class Settings(BaseSettings):
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_from: str = "noreply@searchjobs.app"
+
+    @field_validator("debug", mode="before")
+    @classmethod
+    def _ignore_untrusted_debug_value(cls, _value: object) -> bool:
+        """Derive DEBUG from APP_ENV without parsing stale legacy values."""
+        return False
 
     @model_validator(mode="after")
     def _set_debug_from_env(self) -> Settings:
@@ -106,4 +115,4 @@ class Settings(BaseSettings):
             raise ValueError("\n".join(errors))
 
 
-settings = Settings()
+settings = Settings()  # type: ignore[call-arg]  # Values come from settings sources.

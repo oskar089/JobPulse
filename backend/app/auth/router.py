@@ -5,6 +5,7 @@ Maintains dual auth mode: accepts both cookies and Bearer headers.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
@@ -12,7 +13,15 @@ from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.auth.redis_client import (
+    blacklist_refresh_token,
+    clear_lockout,
+    is_account_locked,
+    is_token_blacklisted,
+    is_token_revoked_for_user,
+    record_failed_login,
+    revoke_user_sessions,
+)
 from app.auth.schemas import (
     ForgotPasswordRequest,
     LoginRequest,
@@ -32,14 +41,7 @@ from app.auth.utils import (
     hash_password,
     verify_password,
 )
-from app.auth.redis_client import (
-    blacklist_refresh_token,
-    clear_lockout,
-    clear_user_blacklist,
-    is_account_locked,
-    is_token_blacklisted,
-    record_failed_login,
-)
+from app.config import settings
 from app.database import get_session
 from app.middleware.rate_limit import limiter
 from app.models import User
@@ -55,16 +57,26 @@ REFRESH_TOKEN_TTL = 604800  # 7 days in seconds
 
 
 def _set_access_token_cookie(response: Response, token: str) -> None:
-    """Set the access_token as an httpOnly, secure, SameSite=Lax cookie."""
+    """Set the access_token as an httpOnly, secure, SameSite=Lax cookie.
+
+    Secure flag is only set in production (non-debug mode) to allow
+    localhost HTTP development.
+    """
     response.set_cookie(
         key="access_token",
         value=token,
         max_age=ACCESS_TOKEN_MAX_AGE,
         httponly=True,
-        secure=True,
+        secure=not settings.debug,
         samesite="lax",
         path="/api",
     )
+
+
+def _lockout_subject(user_id: str, request: Request) -> str:
+    """Scope failed-login counters to user and client so strangers cannot lock an account."""
+    client_host = request.client.host if request.client else "unknown"
+    return f"{user_id}:{client_host}"
 
 
 def _clear_access_token_cookie(response: Response) -> None:
@@ -74,7 +86,7 @@ def _clear_access_token_cookie(response: Response) -> None:
         value="",
         max_age=0,
         httponly=True,
-        secure=True,
+        secure=not settings.debug,
         samesite="lax",
         path="/api",
     )
@@ -106,47 +118,73 @@ async def get_token(request: Request, authorization: str | None = Header(None)) 
     )
 
 
-async def get_current_user_id(token: str = Depends(get_token)) -> str:
-    """Decode JWT token and return the user ID (sub claim)."""
-    payload = decode_access_token(token)
-    if payload is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-        )
+async def _load_active_user(
+    payload: dict,
+    session: AsyncSession,
+) -> User:
+    """Return the user a verified token belongs to, rejecting stale sessions.
+
+    A token is stale when its user no longer exists or when the user's
+    sessions were revoked (for example after a password reset) after the
+    token was issued.
+    """
     user_id = payload.get("sub")
     if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token payload",
         )
-    return user_id
+    if await is_token_revoked_for_user(user_id, payload.get("iat")):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+    result = await session.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+    return user
 
 
-async def require_admin(token: str = Depends(get_token)) -> str:
-    """Extract role from JWT claim, raise 403 if not admin.
+async def get_current_user_id(
+    token: str = Depends(get_token),
+    session: AsyncSession = Depends(get_session),
+) -> str:
+    """Decode the JWT, confirm the user still exists and return its ID."""
+    payload = decode_access_token(token)
+    if payload is None or payload.get("purpose") is not None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+    user = await _load_active_user(payload, session)
+    return user.id
+
+
+async def require_admin(
+    token: str = Depends(get_token),
+    session: AsyncSession = Depends(get_session),
+) -> str:
+    """Require an administrator whose role is current in the database.
 
     Returns the user_id on success.
     """
     payload = decode_access_token(token)
-    if payload is None:
+    if payload is None or payload.get("purpose") is not None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
         )
-    role = payload.get("role", "user")
-    if role != "admin":
+    user = await _load_active_user(payload, session)
+    if user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",
         )
-    user_id = payload.get("sub")
-    if user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload",
-        )
-    return user_id
+    return user.id
 
 
 # ---------------------------------------------------------------------------
@@ -219,23 +257,25 @@ async def login(
     user = result.scalar_one_or_none()
 
     # Early exit if account is locked — skip password check
-    if user and await is_account_locked(user.id):
+    if user and await is_account_locked(_lockout_subject(user.id, request)):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Account is locked due to too many failed login attempts. Try again in 15 minutes.",
+            detail=(
+                "Account is locked due to too many failed login attempts. Try again in 15 minutes."
+            ),
         )
 
     if not user or not verify_password(body.password, user.password_hash):
         # Record the failed attempt (only for known users to avoid leaking info)
         if user:
-            await record_failed_login(user.id)
+            await record_failed_login(_lockout_subject(user.id, request))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
 
     # Successful login — clear lockout
-    await clear_lockout(user.id)
+    await clear_lockout(_lockout_subject(user.id, request))
 
     access = create_access_token(user.id, role=user.role)
     refresh = create_refresh_token(user.id, role=user.role)
@@ -245,7 +285,9 @@ async def login(
 
 
 @router.post("/forgot-password")
+@limiter.limit("5/minute")
 async def forgot_password(
+    request: Request,
     body: ForgotPasswordRequest,
     session: AsyncSession = Depends(get_session),
 ):
@@ -258,10 +300,11 @@ async def forgot_password(
     user = result.scalar_one_or_none()
 
     if user is not None:
-        token = create_reset_token(user.email)
+        token = create_reset_token(user.email, user.password_hash)
         reset_url = f"{settings.app_url}/reset-password?token={token}"
 
         from app.notifications.service import NotificationService
+
         service = NotificationService(None)
         await service.send_email(
             to=user.email,
@@ -286,14 +329,14 @@ async def reset_password(
     session: AsyncSession = Depends(get_session),
 ):
     """Reset the password using a reset token received by email."""
-    email = decode_reset_token(body.token)
-    if email is None:
+    reset_claims = decode_reset_token(body.token)
+    if reset_claims is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token",
         )
 
-    result = await session.execute(select(User).where(User.email == email))
+    result = await session.execute(select(User).where(User.email == reset_claims.get("sub")))
     user = result.scalar_one_or_none()
     if user is None:
         raise HTTPException(
@@ -301,8 +344,16 @@ async def reset_password(
             detail="Invalid or expired reset token",
         )
 
+    current_version = hashlib.sha256(user.password_hash.encode("utf-8")).hexdigest()
+    if reset_claims.get("password_version") != current_version:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        )
+
     user.password_hash = hash_password(body.password)
     await session.flush()
+    await revoke_user_sessions(user.id)
 
     return {"message": "Password reset successfully"}
 
@@ -334,15 +385,20 @@ async def refresh_token(
             detail="Invalid refresh token payload",
         )
 
+    if await is_token_revoked_for_user(user_id, payload.get("iat")):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+        )
+
     # Check blacklist — theft detection
     blacklisted = await is_token_blacklisted(user_id, body.refresh_token)
     if blacklisted:
         logger.warning(
             "Theft detected: blacklisted refresh token reused for user %s. "
-            "Clearing all refresh tokens.",
+            "Keeping the revocation list intact.",
             user_id,
         )
-        await clear_user_blacklist(user_id)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token has been revoked. Please log in again.",

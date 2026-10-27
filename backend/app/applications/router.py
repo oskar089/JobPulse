@@ -1,7 +1,8 @@
 """Applications endpoints."""
+
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -9,6 +10,7 @@ from sqlalchemy.orm import joinedload
 from app.auth.router import get_current_user_id
 from app.database import get_session
 from app.models import Application, Portal, StoredJob
+from app.pagination import MAX_PAGE_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +21,8 @@ router = APIRouter(prefix="/applications", tags=["applications"])
 async def list_applications(
     user_id: str = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_session),
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=MAX_PAGE_SIZE),
+    offset: int = Query(default=0, ge=0),
     status_filter: str | None = None,
 ):
     """Return the current user's applications, newest first.
@@ -63,7 +65,9 @@ async def list_applications(
             "company": app.stored_job.company if app.stored_job else "Unknown",
             "job_title": app.stored_job.title if app.stored_job else "Unknown",
             "job_url": app.stored_job.url if app.stored_job else None,
-            "portal_name": portal_map.get(app.stored_job.portal_id, "Unknown") if app.stored_job else "Unknown",
+            "portal_name": portal_map.get(app.stored_job.portal_id, "Unknown")
+            if app.stored_job
+            else "Unknown",
             "cover_letter_generated": app.cover_letter_generated,
             "cover_letter_text": app.cover_letter_text,
             "error_message": app.error_message,
@@ -84,8 +88,7 @@ async def get_application(
     result = await session.execute(
         select(Application)
         .options(
-            joinedload(Application.stored_job)
-            .joinedload(StoredJob.portal),
+            joinedload(Application.stored_job).joinedload(StoredJob.portal),
         )
         .where(Application.id == application_id, Application.user_id == user_id),
     )
@@ -97,7 +100,9 @@ async def get_application(
             detail="Application not found",
         )
 
-    portal_name = app.stored_job.portal.name if app.stored_job and app.stored_job.portal else "Unknown"
+    portal_name = (
+        app.stored_job.portal.name if app.stored_job and app.stored_job.portal else "Unknown"
+    )
 
     return {
         "id": app.id,

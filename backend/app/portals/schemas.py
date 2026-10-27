@@ -1,6 +1,22 @@
 from datetime import datetime
+from typing import TypeVar
 
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, HttpUrl, field_validator
+
+from app.security.url_guard import UnsafeURLError, validate_url_syntax
+
+UrlT = TypeVar("UrlT", HttpUrl, HttpUrl | None)
+
+
+def _reject_non_public_url(value: UrlT) -> UrlT:
+    """Reject URLs that point at private, loopback or otherwise reserved hosts."""
+    if value is None:
+        return value
+    try:
+        validate_url_syntax(str(value))
+    except UnsafeURLError as exc:
+        raise ValueError(str(exc)) from exc
+    return value
 
 
 class PortalSelectors(BaseModel):
@@ -24,6 +40,11 @@ class PortalCreate(BaseModel):
     selectors: PortalSelectors
     scrape_interval_min: int = 60
 
+    @field_validator("base_url", "job_listing_url")
+    @classmethod
+    def _validate_public_url(cls, value: HttpUrl) -> HttpUrl:
+        return _reject_non_public_url(value)
+
 
 class PortalUpdate(BaseModel):
     name: str | None = None
@@ -32,6 +53,11 @@ class PortalUpdate(BaseModel):
     selectors: PortalSelectors | None = None
     is_enabled: bool | None = None
     scrape_interval_min: int | None = None
+
+    @field_validator("base_url", "job_listing_url")
+    @classmethod
+    def _validate_public_url(cls, value: HttpUrl | None) -> HttpUrl | None:
+        return _reject_non_public_url(value)
 
 
 class PortalResponse(BaseModel):

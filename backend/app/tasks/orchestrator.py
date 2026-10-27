@@ -39,7 +39,9 @@ async def _run_pipeline(pipeline_run_id: str) -> dict:
 
     logger.info(
         "Starting pipeline %s (portal=%s, user=%s)",
-        pipeline_run_id, portal_id, user_id,
+        pipeline_run_id,
+        portal_id,
+        user_id,
     )
 
     # Check if cancelled before starting

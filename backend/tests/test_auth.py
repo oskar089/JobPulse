@@ -11,18 +11,15 @@ Covers Phase 2 tasks (2.1–2.5, 2.8):
 
 from __future__ import annotations
 
-import json
-import time
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
 from jose import jwt
 
+from app.auth.utils import create_access_token, create_refresh_token, create_reset_token
 from app.config import settings
-from app.auth.utils import create_access_token, create_refresh_token
-
 
 # ---------------------------------------------------------------------------
 # Task 2.1: Cookie-reading in auth middleware
@@ -106,11 +103,12 @@ class TestSetCookieOnAuth:
         self, async_client: AsyncClient, test_user, db_session
     ):
         """Successful registration sets Set-Cookie and returns refresh_token."""
-        from app.models import User
-        from sqlalchemy import select, text
+        from sqlalchemy import text
 
         # Delete the pre-created test user so we can register with same email
-        await db_session.execute(text("DELETE FROM \"user\" WHERE email = :e"), {"e": test_user.email})
+        await db_session.execute(
+            text('DELETE FROM "user" WHERE email = :e'), {"e": test_user.email}
+        )
         await db_session.commit()
 
         unique_email = f"new-{test_user.email}"
@@ -187,6 +185,7 @@ def mock_redis():
 
         async def keys(self, pattern: str):
             import re
+
             regex = re.escape(pattern).replace(r"\*", ".*")
             return [k for k in redis_data if re.match(regex, k)]
 
@@ -231,8 +230,12 @@ class TestCreateRefreshToken:
         user_id = "test-user-789"
         refresh = create_refresh_token(user_id)
         access = create_access_token(user_id)
-        refresh_payload = jwt.decode(refresh, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
-        access_payload = jwt.decode(access, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        refresh_payload = jwt.decode(
+            refresh, settings.jwt_secret, algorithms=[settings.jwt_algorithm]
+        )
+        access_payload = jwt.decode(
+            access, settings.jwt_secret, algorithms=[settings.jwt_algorithm]
+        )
         assert refresh_payload.get("purpose") == "refresh"
         assert access_payload.get("purpose") is None
 
@@ -266,9 +269,7 @@ class TestRefreshEndpointWithRotation:
         blacklist_key = f"refresh_blacklist:{test_user.id}"
         assert await mock_redis.sismember(blacklist_key, refresh)
 
-    async def test_refresh_with_invalid_token_returns_401(
-        self, async_client: AsyncClient
-    ):
+    async def test_refresh_with_invalid_token_returns_401(self, async_client: AsyncClient):
         """Invalid or expired refresh token returns 401."""
         response = await async_client.post(
             "/api/auth/refresh",
@@ -276,9 +277,7 @@ class TestRefreshEndpointWithRotation:
         )
         assert response.status_code == 401
 
-    async def test_refresh_sets_new_cookie(
-        self, async_client: AsyncClient, test_user, mock_redis
-    ):
+    async def test_refresh_sets_new_cookie(self, async_client: AsyncClient, test_user, mock_redis):
         """Refresh endpoint also sets new access_token cookie."""
         refresh = create_refresh_token(subject=test_user.id)
         response = await async_client.post(
@@ -335,9 +334,7 @@ class TestLogout:
         blacklist_key = f"refresh_blacklist:{test_user.id}"
         assert await mock_redis.sismember(blacklist_key, refresh)
 
-    async def test_logout_clears_cookie(
-        self, async_client: AsyncClient, test_user, mock_redis
-    ):
+    async def test_logout_clears_cookie(self, async_client: AsyncClient, test_user, mock_redis):
         """Logout sets cookie with empty value and max-age=0."""
         token = create_access_token(subject=test_user.id)
         refresh = create_refresh_token(subject=test_user.id)
@@ -350,9 +347,7 @@ class TestLogout:
         assert "access_token=" in set_cookie
         assert "Max-Age=0" in set_cookie or "max-age=0" in set_cookie.lower()
 
-    async def test_logout_without_token_returns_401(
-        self, async_client: AsyncClient
-    ):
+    async def test_logout_without_token_returns_401(self, async_client: AsyncClient):
         """Logout without auth returns 401."""
         response = await async_client.post(
             "/api/auth/logout",
@@ -369,10 +364,10 @@ class TestLogout:
 class TestTheftDetection:
     """Reusing a blacklisted refresh token must trigger theft detection."""
 
-    async def test_reuse_after_refresh_triggers_theft_clear(
+    async def test_reuse_after_refresh_keeps_revocations(
         self, async_client: AsyncClient, test_user, mock_redis
     ):
-        """Reusing a blacklisted refresh token deletes ALL blacklist entries for user."""
+        """Reusing a blacklisted refresh token must preserve every revocation."""
         refresh = create_refresh_token(subject=test_user.id)
 
         # Use refresh once — gets rotated
@@ -389,16 +384,39 @@ class TestTheftDetection:
         resp3 = await async_client.post("/api/auth/refresh", json={"refresh_token": refresh})
         assert resp3.status_code == 401
 
-        # The entire user's blacklist should be deleted
+        # Both rotated tokens remain revoked; theft detection must never un-revoke them.
         blacklist_key = f"refresh_blacklist:{test_user.id}"
         members = await mock_redis.smembers(blacklist_key)
-        assert len(members) == 0
+        assert members == {refresh, new_refresh}
+
+
+class TestPasswordResetSingleUse:
+    """A password reset link must become invalid after its first use."""
+
+    async def test_reset_token_cannot_be_reused(
+        self, async_client: AsyncClient, db_session, test_user
+    ):
+        from sqlalchemy import select
+
+        from app.models import User
+
+        result = await db_session.execute(select(User).where(User.id == test_user.id))
+        user = result.scalar_one()
+        token = create_reset_token(user.email, user.password_hash)
+        payload = {"token": token, "password": "NewPassword123"}
+
+        first = await async_client.post("/api/auth/reset-password", json=payload)
+        second = await async_client.post("/api/auth/reset-password", json=payload)
+
+        assert first.status_code == 200
+        assert second.status_code == 400
 
     async def test_theft_logs_warning(
         self, async_client: AsyncClient, test_user, mock_redis, caplog
     ):
         """Theft detection logs a warning."""
         import logging
+
         refresh = create_refresh_token(subject=test_user.id)
 
         await async_client.post("/api/auth/refresh", json={"refresh_token": refresh})
@@ -488,9 +506,7 @@ class TestCookieDualAuth:
 class TestAccountLockout:
     """Account lockout via Redis-backed failed-login counter."""
 
-    async def test_record_failed_login_increments_and_returns_count(
-        self, mock_redis
-    ):
+    async def test_record_failed_login_increments_and_returns_count(self, mock_redis):
         """record_failed_login increments the counter each call."""
         from app.auth.redis_client import record_failed_login
 
@@ -502,9 +518,7 @@ class TestAccountLockout:
         count = await record_failed_login("user-1")
         assert count == 2
 
-    async def test_is_account_locked_false_when_below_threshold(
-        self, mock_redis
-    ):
+    async def test_is_account_locked_false_when_below_threshold(self, mock_redis):
         """is_account_locked returns False when count < 5."""
         from app.auth.redis_client import is_account_locked, record_failed_login
 
@@ -540,9 +554,7 @@ class TestAccountLockout:
         await clear_lockout("user-4")
         assert await is_account_locked("user-4") is False
 
-    async def test_successful_login_clears_lockout(
-        self, test_user, mock_redis
-    ):
+    async def test_successful_login_clears_lockout(self, test_user, mock_redis):
         """clear_lockout deletes the lockout counter, allowing future logins."""
         from app.auth.redis_client import (
             clear_lockout,

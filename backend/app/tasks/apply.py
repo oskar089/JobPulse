@@ -13,7 +13,9 @@ from app.tasks import run_async
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(bind=True, max_retries=2, default_retry_delay=120, acks_late=True, reject_on_worker_lost=True)
+@celery_app.task(
+    bind=True, max_retries=2, default_retry_delay=120, acks_late=True, reject_on_worker_lost=True
+)
 def apply_to_job(
     self,  # noqa: ARG001
     application_id: str,
@@ -123,6 +125,7 @@ async def _apply_to_job(
 
         # Update pipeline steps
         from app.models import PipelineRun
+
         pipeline = await session.get(PipelineRun, pipeline_run_id)
         if pipeline:
             step_key = f"apply:{application_id}"
@@ -158,6 +161,7 @@ async def _fail_application(
             app_row.error_message = error
         if pipeline_run_id:
             from app.models import PipelineRun
+
             pipeline = await session.get(PipelineRun, pipeline_run_id)
             if pipeline:
                 step_key = f"apply:{application_id}"

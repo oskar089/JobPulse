@@ -92,10 +92,11 @@ class CoverLetterGenerator:
         last_error: Exception | None = None
         for attempt in range(2):
             try:
+                api_key = settings.llm_api_key.encode("ascii", "ignore").decode()
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     response = await client.post(
                         settings.llm_api_url,
-                        headers={"Authorization": f"Bearer {settings.llm_api_key}"},
+                        headers={"Authorization": f"Bearer {api_key}"},
                         json={
                             "model": settings.llm_model,
                             "messages": [

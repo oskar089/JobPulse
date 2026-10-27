@@ -1,14 +1,20 @@
 """Seed the database with built-in job portals for Argentina."""
 import asyncio
+import sys
+
+# Windows consoles default to cp1252, which cannot encode the emoji used in
+# the success prints. Force UTF-8 so the script completes cleanly.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.config import settings
+
 # Same DB URL as the app config
-DATABASE_URL = (
-    "postgresql+asyncpg://neondb_owner:npg_jM9hvZynakK0@"
-    "ep-odd-block-ad1a5lon.c-2.us-east-1.aws.neon.tech/neondb?ssl=require"
-)
+DATABASE_URL = settings.database_url
 
 from app.models.portal import Portal
 
@@ -88,7 +94,7 @@ async def seed() -> None:
     async with factory() as session:
         # Check if any builtin portals already exist
         result = await session.execute(
-            select(Portal.id).where(Portal.is_builtin == True).limit(1)
+            select(Portal.id).where(Portal.is_builtin.is_(True)).limit(1)
         )
         existing = result.scalar_one_or_none()
 

@@ -1,25 +1,33 @@
 import re
-
 from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
+
+from app.auth.utils import BCRYPT_MAX_BYTES
+
+
+def validate_password_strength(value: str) -> str:
+    """Enforce the password policy shared by registration and reset."""
+    if len(value) < 8:
+        raise ValueError("Password must be at least 8 characters")
+    if len(value.encode("utf-8")) > BCRYPT_MAX_BYTES:
+        raise ValueError(f"Password must be at most {BCRYPT_MAX_BYTES} bytes")
+    if not re.search(r"[A-Z]", value):
+        raise ValueError("Password must contain at least one uppercase letter")
+    if not re.search(r"\d", value):
+        raise ValueError("Password must contain at least one number")
+    return value
 
 
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=255)
 
     @field_validator("password")
     @classmethod
     def password_strength(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters")
-        if not re.search(r"[A-Z]", v):
-            raise ValueError("Password must contain at least one uppercase letter")
-        if not re.search(r"\d", v):
-            raise ValueError("Password must contain at least one number")
-        return v
+        return validate_password_strength(v)
 
 
 class LoginRequest(BaseModel):
@@ -46,19 +54,13 @@ class ForgotPasswordRequest(BaseModel):
 
 
 class ResetPasswordRequest(BaseModel):
-    token: str
+    token: str = Field(max_length=2048)
     password: str
 
     @field_validator("password")
     @classmethod
     def reset_password_strength(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters")
-        if not re.search(r"[A-Z]", v):
-            raise ValueError("Password must contain at least one uppercase letter")
-        if not re.search(r"\d", v):
-            raise ValueError("Password must contain at least one number")
-        return v
+        return validate_password_strength(v)
 
 
 class UserResponse(BaseModel):

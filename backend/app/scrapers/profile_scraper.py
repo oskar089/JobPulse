@@ -8,7 +8,6 @@ job search result listings.
 from __future__ import annotations
 
 import logging
-import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -176,9 +175,7 @@ class ProfileScraper(ABC):
             if not title and not company:
                 continue
 
-            description = (
-                (await desc_el.inner_text()).strip() if desc_el else None
-            )
+            description = (await desc_el.inner_text()).strip() if desc_el else None
 
             results.append(
                 ExperienceItem(
@@ -243,11 +240,7 @@ class InfojobsProfileScraper(ProfileScraper):
 
                 # --- Skills ---
                 raw_skills = await self._get_all_text(page, "skills")
-                skills = [
-                    SkillItem(name=s, level=_DEFAULT_SKILL_LEVEL)
-                    for s in raw_skills
-                    if s
-                ]
+                skills = [SkillItem(name=s, level=_DEFAULT_SKILL_LEVEL) for s in raw_skills if s]
 
                 # --- Location (optional) ---
 
@@ -366,7 +359,11 @@ class LinkedInProfileScraper(ProfileScraper):
 
                 # Check if we hit a login/auth wall (redirected to /login or /authwall)
                 current_url = page.url.lower()
-                if ("/login" in current_url or "/authwall" in current_url or "/signup" in current_url) and "linkedin.com" in current_url:
+                if (
+                    "/login" in current_url
+                    or "/authwall" in current_url
+                    or "/signup" in current_url
+                ) and "linkedin.com" in current_url:
                     raise ValueError(
                         "LinkedIn requires login to view this profile. "
                         "Check your LINKEDIN_EMAIL and LINKEDIN_PASSWORD in .env, "
@@ -385,7 +382,8 @@ class LinkedInProfileScraper(ProfileScraper):
                 await page.wait_for_timeout(2000)
 
                 # --- Extract headline via JS (classes are hashed) ---
-                headline = await page.evaluate("""
+                headline = (
+                    await page.evaluate("""
                     () => {
                         const els = document.querySelectorAll('p');
                         for (const el of els) {
@@ -398,16 +396,21 @@ class LinkedInProfileScraper(ProfileScraper):
                         }
                         return null;
                     }
-                """) or None
+                """)
+                    or None
+                )
 
                 # --- Extract skills from data-testid section ---
-                raw_skills = await page.evaluate("""
+                raw_skills = (
+                    await page.evaluate("""
                     () => {
                         const section = document.querySelector('[data-testid^="profile_Skills_"]');
                         if (!section) return [];
                         const items = section.querySelectorAll('[data-testid^="profile_Skill_"]');
                         if (items.length > 0) {
-                            return Array.from(items).map(el => el.textContent.trim()).filter(Boolean);
+                            return Array.from(items)
+                                .map(el => el.textContent.trim())
+                                .filter(Boolean);
                         }
                         // Fallback: extract all visible text items
                         const texts = new Set();
@@ -424,12 +427,10 @@ class LinkedInProfileScraper(ProfileScraper):
                         });
                         return Array.from(texts);
                     }
-                """) or []
-                skills = [
-                    SkillItem(name=s, level=_DEFAULT_SKILL_LEVEL)
-                    for s in raw_skills
-                    if s
-                ]
+                """)
+                    or []
+                )
+                skills = [SkillItem(name=s, level=_DEFAULT_SKILL_LEVEL) for s in raw_skills if s]
 
                 # --- Extract experience by parsing section text ---
                 work_experience = await self._extract_linkedin_experience(page)
@@ -528,7 +529,9 @@ class LinkedInProfileScraper(ProfileScraper):
                 # Still on /login after submit — diagnose
                 body_text = await page.inner_text("body")
 
-                if any(w in body_text.lower() for w in ("incorrect", "not match", "wrong password")):
+                if any(
+                    w in body_text.lower() for w in ("incorrect", "not match", "wrong password")
+                ):
                     raise ValueError(
                         "LinkedIn says the email or password is incorrect. "
                         "Verify your LINKEDIN_EMAIL and LINKEDIN_PASSWORD in .env",
@@ -562,7 +565,8 @@ class LinkedInProfileScraper(ProfileScraper):
         """
         from app.profiles.schemas import ExperienceItem
 
-        cards = await page.evaluate("""
+        cards = (
+            await page.evaluate("""
             () => {
                 const section = document.querySelector(
                     '[data-testid^="profile_ExperienceTopLevelSection_"]'
@@ -595,11 +599,13 @@ class LinkedInProfileScraper(ProfileScraper):
                 }
                 return cards;
             }
-        """) or []
+        """)
+            or []
+        )
 
         results = []
         for card_text in cards:
-            lines = [l.strip() for l in card_text.split('\n') if l.strip()]
+            lines = [line.strip() for line in card_text.split("\n") if line.strip()]
             if not lines:
                 continue
 
@@ -609,10 +615,10 @@ class LinkedInProfileScraper(ProfileScraper):
             company_text = lines[1] if len(lines) > 1 else ""
             # Remove date ranges (e.g. "· 2 yrs 6 mos" or "· 2020 - 2023")
             # Dates appear at the end of the company line or as separate lines
-            description = '\n'.join(lines[2:]) if len(lines) > 2 else None
+            description = "\n".join(lines[2:]) if len(lines) > 2 else None
             # Clean up date ranges from company
-            if '·' in company_text:
-                company_text = company_text.split('·')[0].strip()
+            if "·" in company_text:
+                company_text = company_text.split("·")[0].strip()
 
             results.append(
                 ExperienceItem(

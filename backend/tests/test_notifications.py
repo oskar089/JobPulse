@@ -46,7 +46,7 @@ async def test_send_email_calls_starttls(service: NotificationService) -> None:
 
 @pytest.mark.asyncio
 async def test_send_email_with_auth_calls_login(service: NotificationService) -> None:
-    """GIVEN SMTP credentials are provided WHEN send_email runs THEN it calls login after STARTTLS."""
+    """Authenticate with SMTP credentials after starting TLS."""
     mock_smtp = AsyncMock()
     mock_smtp.__aenter__.return_value = mock_smtp
 
@@ -160,7 +160,7 @@ async def test_check_smtp_connectivity_success(service: NotificationService) -> 
 
 @pytest.mark.asyncio
 async def test_check_smtp_connectivity_with_different_port(service: NotificationService) -> None:
-    """GIVEN SMTP uses a non-default port WHEN check_smtp_connectivity runs THEN it connects on that port."""
+    """Use the configured non-default SMTP port for connectivity checks."""
     mock_smtp = AsyncMock()
     mock_smtp.__aenter__.return_value = mock_smtp
 
@@ -185,7 +185,7 @@ async def test_check_smtp_connectivity_failure_logs_warning(
     service: NotificationService,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """GIVEN SMTP is unreachable WHEN check_smtp_connectivity runs THEN it logs warning and returns False."""
+    """Log a warning and return false when SMTP is unreachable."""
     with (
         patch("app.notifications.service.settings") as mock_settings,
         patch("aiosmtplib.SMTP", side_effect=Exception("Connection refused")),

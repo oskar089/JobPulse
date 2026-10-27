@@ -10,7 +10,9 @@ from app.tasks import run_async
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(bind=True, max_retries=2, default_retry_delay=30, acks_late=True, reject_on_worker_lost=True)
+@celery_app.task(
+    bind=True, max_retries=2, default_retry_delay=30, acks_late=True, reject_on_worker_lost=True
+)
 def notify_result(
     self,  # noqa: ARG001
     application_id: str,

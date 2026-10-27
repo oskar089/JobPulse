@@ -3,10 +3,30 @@ import os
 from logging.config import fileConfig
 from pathlib import Path
 
-from alembic import context
 from dotenv import load_dotenv
+from sqlalchemy import JSON as SAJSON
 from sqlalchemy import pool
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy.ext.compiler import compiles
+
+from alembic import context
+
+# ---------------------------------------------------------------------------
+# SQLite compatibility: PostgreSQL-specific types used by the models/migrations
+# are compiled to portable types when running against a local SQLite database.
+# (Mirrors the same workaround used in tests/conftest.py.)
+# ---------------------------------------------------------------------------
+
+
+@compiles(ARRAY, "sqlite")
+def _compile_array_sqlite(type_, compiler, **kw):
+    return compiler.process(SAJSON())
+
+
+@compiles(UUID, "sqlite")
+def _compile_uuid_sqlite(type_, compiler, **kw):
+    return "VARCHAR(36)"
 
 # Load .env from project root (one level up from backend/)
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")

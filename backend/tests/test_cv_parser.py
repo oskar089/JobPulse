@@ -6,9 +6,11 @@ the LLM backend.  The LLM call is mocked so no API calls are made.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 from app.profiles.cv_parser import CVParser
@@ -108,12 +110,71 @@ class TestCVParserParseCV:
             await parser.parse_cv(pdf_path)
 
     @pytest.mark.asyncio
+    async def test_transport_failure_is_not_retried(self) -> None:
+        parser = CVParser()
+        parser._call_llm = AsyncMock(  # type: ignore[method-assign]
+            side_effect=httpx.ReadTimeout("LLM request timed out"),
+        )
+
+        with pytest.raises(ValueError, match="LLM request timed out"):
+            await parser._parse_with_llm("Example CV text")
+
+        parser._call_llm.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_llm_parse_budget_expires_before_proxy_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("app.profiles.cv_parser.LLM_PARSE_TIMEOUT_SECONDS", 0.01, raising=False)
+        parser = CVParser()
+
+        async def delayed_response(*_args: object) -> str:
+            await asyncio.sleep(0.05)
+            return "{}"
+
+        parser._call_llm = AsyncMock(side_effect=delayed_response)  # type: ignore[method-assign]
+
+        with pytest.raises(ValueError, match="LLM parsing timed out"):
+            await parser._parse_with_llm("Example CV text")
+
+        parser._call_llm.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_llm_parse_budget_is_shared_across_retries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("app.profiles.cv_parser.LLM_PARSE_TIMEOUT_SECONDS", 0.1)
+        parser = CVParser()
+
+        async def malformed_response(*_args: object) -> str:
+            await asyncio.sleep(0.06)
+            return "invalid JSON"
+
+        parser._call_llm = AsyncMock(side_effect=malformed_response)  # type: ignore[method-assign]
+
+        with pytest.raises(ValueError, match="LLM parsing timed out"):
+            await parser._parse_with_llm("Example CV text")
+
+        assert parser._call_llm.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_invalid_json_is_retried_once(self) -> None:
+        parser = CVParser()
+        parser._call_llm = AsyncMock(side_effect=["invalid JSON", "{}"])  # type: ignore[method-assign]
+
+        profile = await parser._parse_with_llm("Example CV text")
+
+        assert profile.skills == []
+        assert parser._call_llm.await_count == 2
+
+    @pytest.mark.asyncio
     async def test_parse_cv_handles_empty_pdf(self):
         """parse_cv() raises ValueError when the PDF has no extractable text."""
         # Create a minimal valid but empty PDF
         empty_path = str(FIXTURES_DIR / "empty_content.pdf")
         try:
             from fpdf import FPDF
+
             pdf = FPDF()
             pdf.add_page()
             pdf.set_font("Helvetica", size=12)

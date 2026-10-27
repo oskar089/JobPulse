@@ -7,6 +7,7 @@ the raw text.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -18,6 +19,7 @@ from app.config import settings
 from app.profiles.schemas import CVParseResult, ImportedProfile
 
 logger = logging.getLogger(__name__)
+LLM_PARSE_TIMEOUT_SECONDS = 150
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -179,31 +181,38 @@ class CVParser:
             {"role": "user", "content": text},
         ]
 
-        # Retry loop: first attempt, then retry with strengthened prompt if needed
-        for attempt in range(2):
-            try:
-                raw = await self._call_llm(messages, backend)
-                if not raw:
-                    raise ValueError("Empty response from LLM")
-                data = json.loads(raw)
-                return ImportedProfile(**data)
-            except (json.JSONDecodeError, ValueError, Exception) as exc:
-                if attempt == 0:
-                    logger.info(
-                        "LLM CV parsing attempt 1 failed (%s), retrying "
-                        "with strengthened prompt",
-                        exc,
-                    )
-                    messages[0]["content"] = (
-                        _EXTRACTION_PROMPT
-                        + "\n\nCRITICAL: Respond with raw JSON only. "
-                        "No markdown, no code fences, no explanation."
-                    )
-                    continue
-                logger.exception("LLM CV parsing failed after retry")
-                raise ValueError(
-                    f"Failed to parse CV with LLM ({settings.llm_model}): {exc}",
-                ) from exc
+        try:
+            async with asyncio.timeout(LLM_PARSE_TIMEOUT_SECONDS):
+                # Only malformed output merits another LLM request.
+                for attempt in range(2):
+                    try:
+                        raw = await self._call_llm(messages, backend)
+                        if not raw:
+                            raise ValueError("Empty response from LLM")
+                        data = json.loads(raw)
+                        if not isinstance(data, dict):
+                            raise ValueError("LLM response must be a JSON object")
+                        return ImportedProfile(**data)
+                    except ValueError as exc:
+                        if attempt == 0:
+                            logger.info(
+                                "LLM CV parsing attempt 1 failed (%s), retrying "
+                                "with strengthened prompt",
+                                exc,
+                            )
+                            messages[0]["content"] = (
+                                _EXTRACTION_PROMPT + "\n\nCRITICAL: Respond with raw JSON only. "
+                                "No markdown, no code fences, no explanation."
+                            )
+                            continue
+                        logger.exception("LLM CV parsing failed after retry")
+                        raise ValueError(
+                            f"Failed to parse CV with LLM ({settings.llm_model}): {exc}"
+                        ) from exc
+        except TimeoutError as exc:
+            raise ValueError("LLM parsing timed out") from exc
+        except httpx.RequestError as exc:
+            raise ValueError(f"Failed to parse CV with LLM ({settings.llm_model}): {exc}") from exc
 
         raise ValueError("Unexpected: LLM parsing loop exited without return")
 
@@ -253,7 +262,9 @@ class CVParser:
             raise ValueError(f"Ollama returned empty content: {body}")
 
         # Strip markdown fences if the model wrapped it anyway
-        return content.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        return (
+            content.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        )
 
     # ------------------------------------------------------------------
     # OpenAI-compatible endpoint  (POST /v1/chat/completions)
@@ -274,7 +285,9 @@ class CVParser:
         resp = await client.post(
             url,
             json=payload,
-            headers={"Authorization": f"Bearer {settings.llm_api_key}"}
+            headers={
+                "Authorization": f"Bearer {settings.llm_api_key.encode('ascii', 'ignore').decode()}"
+            }
             if settings.llm_api_key
             else {},
             timeout=120.0,

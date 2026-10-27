@@ -79,15 +79,18 @@ async def _scheduled_pipeline_check() -> dict:
                     trigger="scheduled",
                 )
                 session.add(pipeline_run)
-                runs.append({
-                    "pipeline_run_id": pipeline_run.id,
-                    "portal_id": portal.id,
-                    "portal_name": portal.name,
-                })
+                runs.append(
+                    {
+                        "pipeline_run_id": pipeline_run.id,
+                        "portal_id": portal.id,
+                        "portal_name": portal.name,
+                    }
+                )
             await session.commit()
 
         # --- Dispatch Celery tasks (lazy import to avoid circular dependency) ---
         from app.tasks.orchestrator import run_pipeline as run_pipeline_task  # noqa: PLC0415
+
         for run in runs:
             try:
                 run_pipeline_task.delay(run["pipeline_run_id"])
@@ -95,7 +98,8 @@ async def _scheduled_pipeline_check() -> dict:
             except Exception as exc:
                 logger.warning(
                     "Failed to dispatch pipeline %s: %s",
-                    run["pipeline_run_id"], exc,
+                    run["pipeline_run_id"],
+                    exc,
                 )
                 # Mark as failed in DB to avoid orphaned "pending" runs
                 async with async_session_factory() as session:
@@ -108,7 +112,8 @@ async def _scheduled_pipeline_check() -> dict:
 
     logger.info(
         "Scheduled check complete — %d runs created, %d dispatch failures",
-        total_created, total_failed,
+        total_created,
+        total_failed,
     )
 
     return {

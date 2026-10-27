@@ -16,6 +16,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from httpx import AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings as app_settings
 from app.models import CurriculumVitae, Profile
@@ -80,7 +82,9 @@ class TestImportLinkedIn:
     """POST /api/profiles/import/linkedin"""
 
     _API_KEY_PATCH = patch.object(
-        app_settings, "linkedin_api_key", "test-api-key",
+        app_settings,
+        "linkedin_api_key",
+        "test-api-key",
     )
 
     async def test_import_linkedin_success(
@@ -296,9 +300,13 @@ class TestImportPreviewSave:
             headline="Engineer at Acme",
             summary="Backend developer",
             skills=[SkillItem(name="Go", level="intermediate")],
-            education=[EducationItem(
-                institution="MIT", degree="BS", start_date="2010",
-            )],
+            education=[
+                EducationItem(
+                    institution="MIT",
+                    degree="BS",
+                    start_date="2010",
+                )
+            ],
             linkedin_url="https://linkedin.com/in/testuser",
         )
         resp = await async_client.post(
@@ -432,6 +440,42 @@ class TestCVUpload:
         assert len(body["parsed_data"]["skills"]) == 1
         assert body["parsed_data"]["skills"][0]["name"] == "Python"
 
+    async def test_upload_cv_parse_failure_cleans_up(
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
+        test_user: object,
+        auth_headers: dict[str, str],
+    ) -> None:
+        profile = Profile(user_id=test_user.id, experience_level="mid")
+        db_session.add(profile)
+        await db_session.flush()
+
+        with (
+            patch(
+                "app.profiles.cv_parser.CVParser.parse_cv",
+                new=AsyncMock(side_effect=ValueError("LLM timed out")),
+            ),
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("app.config.settings.upload_dir", tmpdir),
+        ):
+            response = await async_client.post(
+                "/api/profiles/cv/upload",
+                files={"file": ("resume.pdf", _TINY_PDF, "application/pdf")},
+                headers=auth_headers,
+            )
+            assert list(Path(tmpdir).glob("*.pdf")) == []
+
+        assert response.status_code == 502
+        assert response.json() == {
+            "detail": "CV parsing failed; upload could not be completed. Please try again."
+        }
+        records = await db_session.execute(
+            select(CurriculumVitae).where(CurriculumVitae.user_id == test_user.id)
+        )
+        assert records.scalars().all() == []
+        assert profile.cv_file_url is None
+
     async def test_upload_cv_non_pdf_rejected(
         self,
         async_client: AsyncClient,
@@ -559,6 +603,7 @@ class TestCVDelete:
 
         # Verify DB record is gone
         from sqlalchemy import select
+
         result = await db_session.execute(
             select(CurriculumVitae).where(CurriculumVitae.id == cv_id),
         )

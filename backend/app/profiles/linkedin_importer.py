@@ -163,11 +163,7 @@ class LinkedInImporter:
 
         # --- Skills ---
         raw_skills: list = person.get("skills") or []
-        skills = [
-            SkillItem(name=s, level=_DEFAULT_SKILL_LEVEL)
-            for s in raw_skills
-            if s
-        ]
+        skills = [SkillItem(name=s, level=_DEFAULT_SKILL_LEVEL) for s in raw_skills if s]
 
         # --- Education ---
         raw_education: list = person.get("education") or []

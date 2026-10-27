@@ -111,9 +111,7 @@ class MergeService:
             key_fn=_dedup_key_institution_degree,
         )
 
-        incoming_experience = [
-            e.model_dump() for e in (imported.work_experience or [])
-        ]
+        incoming_experience = [e.model_dump() for e in (imported.work_experience or [])]
         result["work_experience"] = _merge_list(
             existing.get("work_experience"),
             incoming_experience,

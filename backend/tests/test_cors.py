@@ -5,7 +5,6 @@ Verifies that CORS middleware is configured with restricted methods and headers.
 
 from __future__ import annotations
 
-import pytest
 from httpx import AsyncClient
 
 
