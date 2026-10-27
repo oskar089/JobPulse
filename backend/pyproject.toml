@@ -64,6 +64,7 @@ disable_error_code = ["name-defined"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["."]
 # E2E tests need live servers; run them explicitly with `-m e2e`
 addopts = "-m 'not e2e'"
 filterwarnings = [
