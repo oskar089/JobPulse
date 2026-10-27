@@ -14,7 +14,7 @@ node_modules/
 
 # Secrets & env
 .env
-.env.local
+.env.*
 *.env
 
 # IDE

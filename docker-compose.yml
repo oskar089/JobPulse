@@ -21,7 +21,7 @@ services:
   # PostgreSQL 16 — primary database (internal network only)
   # --------------------------------------------------------------------------
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.4-alpine
     restart: unless-stopped
     expose:
       - "5432"
@@ -49,7 +49,7 @@ services:
   # Redis 7 — Celery broker & result backend (internal network only)
   # --------------------------------------------------------------------------
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
     restart: unless-stopped
     expose:
       - "6379"
@@ -79,16 +79,26 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      # Keep local development access without exposing auth endpoints to the internet.
+      - "127.0.0.1:8000:8000"
     environment:
+      # The only public API ingress is Nginx, which overwrites forwarding headers.
+      # Other containers on this private Compose network are trusted peers.
+      FORWARDED_ALLOW_IPS: "*"
       # Override connection strings for Docker networking
       DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-searchjobs}"
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      # Shared rate-limit counters across Uvicorn workers (separate Redis DB)
+      RATE_LIMIT_STORAGE_URI: "redis://:${REDIS_PASSWORD}@redis:6379/1"
+      # Used by docker-entrypoint.sh to wait for PostgreSQL
+      POSTGRES_HOST: "postgres"
+      POSTGRES_USER: "${POSTGRES_USER}"
+      # Only the API service applies Alembic migrations on startup
+      RUN_MIGRATIONS: "true"
 
-      # App config (override via .env)
-      APP_NAME: "${APP_NAME:-JobPulse}"
+      # App config (override via .env). DEBUG is derived from APP_ENV.
+      APP_NAME: "${APP_NAME:-Search Jobs}"
       APP_ENV: "${APP_ENV:-development}"
-      DEBUG: "${DEBUG:-true}"
       API_PREFIX: "${API_PREFIX:-/api}"
       APP_URL: "${APP_URL:-http://localhost:5173}"
       CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:5173}"
@@ -96,7 +106,7 @@ services:
       # Auth
       JWT_SECRET: "${JWT_SECRET}"
       JWT_ALGORITHM: "${JWT_ALGORITHM:-HS256}"
-      JWT_EXPIRES_IN_MINUTES: "${JWT_EXPIRES_IN_MINUTES:-10080}"
+      JWT_EXPIRES_IN_MINUTES: "${JWT_EXPIRES_IN_MINUTES:-15}"
 
       # Redis auth
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
@@ -136,7 +146,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      # Margin for Alembic migrations before Uvicorn starts
+      start_period: 90s
     deploy:
       resources:
         limits:
@@ -157,16 +168,17 @@ services:
     environment:
       DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-searchjobs}"
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      POSTGRES_HOST: "postgres"
+      POSTGRES_USER: "${POSTGRES_USER}"
 
       APP_NAME: "${APP_NAME:-Search Jobs}"
       APP_ENV: "${APP_ENV:-development}"
-      DEBUG: "${DEBUG:-false}"
       API_PREFIX: "${API_PREFIX:-/api}"
       CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:5173}"
 
       JWT_SECRET: "${JWT_SECRET}"
       JWT_ALGORITHM: "${JWT_ALGORITHM:-HS256}"
-      JWT_EXPIRES_IN_MINUTES: "${JWT_EXPIRES_IN_MINUTES:-10080}"
+      JWT_EXPIRES_IN_MINUTES: "${JWT_EXPIRES_IN_MINUTES:-15}"
 
       # Redis auth
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
@@ -195,6 +207,9 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      # Wait until the API has applied migrations
+      backend:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.celery_app inspect ping >/dev/null 2>&1 || exit 1"]
@@ -225,10 +240,11 @@ services:
     environment:
       DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-searchjobs}"
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      POSTGRES_HOST: "postgres"
+      POSTGRES_USER: "${POSTGRES_USER}"
 
       APP_NAME: "${APP_NAME:-Search Jobs}"
       APP_ENV: "${APP_ENV:-development}"
-      DEBUG: "${DEBUG:-false}"
 
       JWT_SECRET: "${JWT_SECRET}"
 
@@ -247,6 +263,9 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      # Wait until the API has applied migrations
+      backend:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f 'celery.*beat' >/dev/null 2>&1 || exit 1"]
@@ -272,7 +291,8 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "5173:80"
+      # Local access only; put a TLS-terminating reverse proxy in front for public use
+      - "127.0.0.1:5173:80"
     depends_on:
       - backend
     healthcheck:
