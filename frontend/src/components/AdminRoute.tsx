@@ -7,7 +7,7 @@ export function AdminRoute() {
   if (isLoading) {
     return (
       <div className="flex h-screen items-center justify-center bg-slate-900">
-        <div className="text-slate-400 text-sm">Loading...</div>
+        <p role="status" className="text-slate-400 text-sm">Loading...</p>
       </div>
     );
   }

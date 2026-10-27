@@ -46,5 +46,5 @@ export interface CancelResponse {
 }
 
 export function cancelPipeline(runId: string): Promise<CancelResponse> {
-  return api<CancelResponse>(`/pipeline/${runId}/cancel`, { method: "POST" });
+  return api<CancelResponse>(`/pipeline/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
 }

@@ -59,7 +59,7 @@ export async function uploadCv(file: File): Promise<CVParseResult> {
 }
 
 export async function downloadCv(cvId: string): Promise<Blob> {
-  const res = await fetch(`${API_BASE}/profiles/cv/download/${cvId}`, {
+  const res = await fetch(`${API_BASE}/profiles/cv/download/${encodeURIComponent(cvId)}`, {
     credentials: "include",
   });
   if (!res.ok) throw new ApiError("Download failed", res.status);
@@ -67,5 +67,5 @@ export async function downloadCv(cvId: string): Promise<Blob> {
 }
 
 export async function deleteCv(cvId: string): Promise<void> {
-  return api<void>(`/profiles/cv/${cvId}`, { method: "DELETE" });
+  return api<void>(`/profiles/cv/${encodeURIComponent(cvId)}`, { method: "DELETE" });
 }

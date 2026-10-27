@@ -10,7 +10,10 @@ interface PortalEditorProps {
   onSave: (data: PortalCreate) => void;
   portal?: Portal;
   isLoading?: boolean;
+  error?: string;
 }
+
+const DEFAULT_SCRAPE_INTERVAL_MIN = 60;
 
 const emptySelectors: PortalSelectors = {
   job_card: "",
@@ -36,14 +39,14 @@ const selectorFields: Array<{ key: keyof PortalSelectors; label: string; require
   { key: "apply_button", label: "Apply Button Selector (optional)", required: false },
 ];
 
-export function PortalEditor({ isOpen, onClose, onSave, portal, isLoading }: PortalEditorProps) {
+export function PortalEditor({ isOpen, onClose, onSave, portal, isLoading, error }: PortalEditorProps) {
   const isEdit = !!portal;
   const [name, setName] = useState(portal?.name ?? "");
   const [baseUrl, setBaseUrl] = useState(portal?.base_url ?? "");
   const [jobListingUrl, setJobListingUrl] = useState(portal?.job_listing_url ?? "");
   const [selectors, setSelectors] = useState<PortalSelectors>(portal?.selectors ?? emptySelectors);
   const [scrapeInterval, setScrapeInterval] = useState(
-    portal?.scrape_interval_min?.toString() ?? "60",
+    portal?.scrape_interval_min?.toString() ?? String(DEFAULT_SCRAPE_INTERVAL_MIN),
   );
 
   const handleSubmit = (e: FormEvent) => {
@@ -63,7 +66,7 @@ export function PortalEditor({ isOpen, onClose, onSave, portal, isLoading }: Por
         posted_date: selectors.posted_date || null,
         apply_button: selectors.apply_button || null,
       },
-      scrape_interval_min: Number(scrapeInterval) || 60,
+      scrape_interval_min: Number(scrapeInterval) || DEFAULT_SCRAPE_INTERVAL_MIN,
     });
   };
 
@@ -83,6 +86,7 @@ export function PortalEditor({ isOpen, onClose, onSave, portal, isLoading }: Por
         />
         <Input
           label="Base URL"
+          type="url"
           value={baseUrl}
           onChange={(e) => setBaseUrl(e.target.value)}
           required
@@ -90,14 +94,15 @@ export function PortalEditor({ isOpen, onClose, onSave, portal, isLoading }: Por
         />
         <Input
           label="Job Listing URL"
+          type="url"
           value={jobListingUrl}
           onChange={(e) => setJobListingUrl(e.target.value)}
           required
           placeholder="https://example.com/jobs"
         />
 
-        <div className="space-y-3">
-          <h3 className="text-sm font-medium text-slate-300">Selectors</h3>
+        <fieldset className="space-y-3">
+          <legend className="text-sm font-medium text-slate-300">Selectors</legend>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {selectorFields.map(({ key, label, required }) => (
               <Input
@@ -109,15 +114,22 @@ export function PortalEditor({ isOpen, onClose, onSave, portal, isLoading }: Por
               />
             ))}
           </div>
-        </div>
+        </fieldset>
 
         <Input
           label="Scrape Interval (minutes)"
           type="number"
+          min={1}
           value={scrapeInterval}
           onChange={(e) => setScrapeInterval(e.target.value)}
-          placeholder="60"
+          placeholder={String(DEFAULT_SCRAPE_INTERVAL_MIN)}
         />
+
+        {error && (
+          <p role="alert" className="text-sm text-red-400">
+            Could not save the portal: {error}
+          </p>
+        )}
 
         <div className="flex justify-end gap-3 pt-2">
           <Button type="button" variant="ghost" onClick={onClose}>

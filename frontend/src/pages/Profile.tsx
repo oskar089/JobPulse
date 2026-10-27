@@ -1,137 +1,30 @@
-import { useState, useEffect, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Linkedin, Globe, Plus, Trash2, Upload } from "lucide-react";
-import { cn } from "../lib/utils";
+import { cn, focusRing } from "../lib/utils";
 import { getMyProfile, updateMyProfile, importLinkedin, importInfojobs, previewSave, uploadCv, downloadCv, deleteCv } from "../lib/profiles";
 import { Input } from "../components/ui/Input";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
-import { Badge } from "../components/ui/Badge";
 import { Modal } from "../components/ui/Modal";
-import type { Profile, ImportedProfile, SkillItem, EducationItem, ExperienceItem, CVParseResult } from "../types";
+import { Select } from "../components/ui/Select";
+import { Textarea } from "../components/ui/Textarea";
+import { TagInput } from "../components/profile/TagInput";
+import { SkillTagInput } from "../components/profile/SkillTagInput";
+import type { Profile, ImportedProfile, EducationItem, ExperienceItem, CVParseResult } from "../types";
 
-const EXPERIENCE_LEVELS = ["junior", "mid", "senior", "lead"];
+const EXPERIENCE_LEVELS = ["junior", "mid", "senior", "lead"].map((level) => ({
+  value: level,
+  label: level.charAt(0).toUpperCase() + level.slice(1),
+}));
 
-const SKILL_LEVELS = [
-  { value: "beginner", label: "Principiante" },
-  { value: "intermediate", label: "Intermedio" },
-  { value: "advanced", label: "Avanzado" },
-  { value: "expert", label: "Experto" },
+const IMPORT_PROVIDERS = [
+  { id: "linkedin" as const, label: "LinkedIn", Icon: Linkedin },
+  { id: "infojobs" as const, label: "Infojobs", Icon: Globe },
 ];
 
-interface TagInputProps {
-  label: string;
-  tags: string[];
-  onAdd: (tag: string) => void;
-  onRemove: (index: number) => void;
-  placeholder?: string;
-}
-
-function TagInput({ label, tags, onAdd, onRemove, placeholder }: TagInputProps) {
-  const [input, setInput] = useState("");
-
-  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && input.trim()) {
-      e.preventDefault();
-      onAdd(input.trim());
-      setInput("");
-    }
-  };
-
-  return (
-    <div className="space-y-1">
-      <label className="block text-sm font-medium text-slate-300">{label}</label>
-      <div className="flex flex-wrap gap-1.5 mb-2">
-        {tags.map((tag, i) => (
-          <Badge key={`${tag}-${i}`} variant="info">
-            {tag}
-            <button
-              type="button"
-              onClick={() => onRemove(i)}
-              className="ml-1.5 text-blue-200 hover:text-white"
-            >
-              &times;
-            </button>
-          </Badge>
-        ))}
-      </div>
-      <input
-        type="text"
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder={placeholder || "Type and press Enter to add"}
-        className="w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-      />
-    </div>
-  );
-}
-
-interface SkillTagInputProps {
-  skills: SkillItem[];
-  onAdd: (skill: SkillItem) => void;
-  onRemove: (index: number) => void;
-}
-
-function SkillTagInput({ skills, onAdd, onRemove }: SkillTagInputProps) {
-  const [name, setName] = useState("");
-  const [level, setLevel] = useState("intermediate");
-
-  const handleAdd = () => {
-    if (name.trim()) {
-      onAdd({ name: name.trim(), level });
-      setName("");
-      setLevel("intermediate");
-    }
-  };
-
-  return (
-    <div className="space-y-1">
-      <label className="block text-sm font-medium text-slate-300">Habilidades</label>
-      <div className="flex flex-wrap gap-1.5 mb-2">
-        {skills.map((skill, i) => (
-          <Badge key={`${skill.name}-${i}`} variant="info">
-            {skill.name} ({skill.level})
-            <button
-              type="button"
-              onClick={() => onRemove(i)}
-              className="ml-1.5 text-blue-200 hover:text-white"
-            >
-              &times;
-            </button>
-          </Badge>
-        ))}
-      </div>
-      <div className="flex gap-2">
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Nombre de la habilidad"
-          className="flex-1 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-        <select
-          value={level}
-          onChange={(e) => setLevel(e.target.value)}
-          className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          {SKILL_LEVELS.map((sl) => (
-            <option key={sl.value} value={sl.value}>
-              {sl.label}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          onClick={handleAdd}
-          className="rounded-lg bg-blue-600 px-3 py-2 text-white hover:bg-blue-700"
-        >
-          <Plus className="h-4 w-4" />
-        </button>
-      </div>
-    </div>
-  );
-}
+const MAX_CV_SIZE_BYTES = 10 * 1024 * 1024;
+const SUCCESS_MESSAGE_MS = 3000;
 
 export default function ProfilePage() {
   const queryClient = useQueryClient();
@@ -173,6 +66,9 @@ export default function ProfilePage() {
   const [cvError, setCvError] = useState("");
   const [cvResult, setCvResult] = useState<CVParseResult | null>(null);
   const [previewMode, setPreviewMode] = useState<"import" | "cv">("import");
+  const cvInputRef = useRef<HTMLInputElement>(null);
+  const cvInputId = useId();
+  const cvHintId = useId();
 
   const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ["my-profile"],
@@ -190,7 +86,7 @@ export default function ProfilePage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["my-profile"] });
       setSuccess("Profile saved successfully");
-      setTimeout(() => setSuccess(""), 3000);
+      setTimeout(() => setSuccess(""), SUCCESS_MESSAGE_MS);
     },
   });
 
@@ -201,11 +97,11 @@ export default function ProfilePage() {
       setIsPreviewOpen(false);
       setEditData(null);
       setImportUrl("");
-      setSuccess("Perfil importado correctamente");
-      setTimeout(() => setSuccess(""), 3000);
+      setSuccess("Profile imported successfully");
+      setTimeout(() => setSuccess(""), SUCCESS_MESSAGE_MS);
     },
     onError: (err: Error) => {
-      setSaveError(`Error al guardar: ${err.message}`);
+      setSaveError(`Could not save: ${err.message}`);
     },
   });
 
@@ -227,7 +123,7 @@ export default function ProfilePage() {
 
   const handleImport = async () => {
     if (!importUrl.trim()) {
-      setImportError("La URL no puede estar vacía");
+      setImportError("The profile URL is required");
       return;
     }
     setImportError("");
@@ -241,7 +137,7 @@ export default function ProfilePage() {
       setIsPreviewOpen(true);
       setSaveError("");
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Error al importar perfil";
+      const message = err instanceof Error ? err.message : "Could not import the profile";
       setImportError(message);
     } finally {
       setIsImporting(false);
@@ -270,15 +166,14 @@ export default function ProfilePage() {
 
     // Validate PDF
     if (file.type && file.type !== "application/pdf") {
-      setCvError("Solo se aceptan archivos PDF");
+      setCvError("Only PDF files are accepted");
       setCvFile(null);
       return;
     }
 
-    // Validate max size (10 MB)
-    const MAX_SIZE = 10 * 1024 * 1024;
-    if (file.size > MAX_SIZE) {
-      setCvError("El archivo excede el tamaño máximo de 10 MB");
+    // Validate max size
+    if (file.size > MAX_CV_SIZE_BYTES) {
+      setCvError("The file exceeds the 10 MB limit");
       setCvFile(null);
       return;
     }
@@ -300,7 +195,7 @@ export default function ProfilePage() {
       setIsPreviewOpen(true);
       queryClient.invalidateQueries({ queryKey: ["my-profile"] });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Error al subir el CV";
+      const message = err instanceof Error ? err.message : "Could not upload the CV";
       setCvError(message);
     } finally {
       setCvUploading(false);
@@ -319,19 +214,19 @@ export default function ProfilePage() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Error al descargar el CV";
+      const message = err instanceof Error ? err.message : "Could not download the CV";
       setCvError(message);
     }
   };
 
   const handleDeleteCv = async (cvId: string) => {
-    if (!confirm("¿Estás seguro de eliminar este CV?")) return;
+    if (!confirm("Are you sure you want to delete this CV?")) return;
     try {
       await deleteCv(cvId);
       setCvResult(null);
       queryClient.invalidateQueries({ queryKey: ["my-profile"] });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Error al eliminar el CV";
+      const message = err instanceof Error ? err.message : "Could not delete the CV";
       setCvError(message);
     }
   };
@@ -419,7 +314,11 @@ export default function ProfilePage() {
   };
 
   if (profileLoading) {
-    return <div className="text-slate-400 text-sm">Loading profile...</div>;
+    return (
+      <div role="status" className="text-slate-400 text-sm">
+        Loading profile...
+      </div>
+    );
   }
 
   const addTag = (field: keyof Pick<Profile, "target_roles" | "tech_stack" | "locations" | "languages">) => (tag: string) => {
@@ -436,7 +335,7 @@ export default function ProfilePage() {
       <p className="text-slate-400 text-sm mb-6">Manage your job search profile and preferences.</p>
 
       {success && (
-        <div className="mb-4 rounded-lg bg-green-900/40 border border-green-700 px-4 py-2 text-sm text-green-300">
+        <div role="status" className="mb-4 rounded-lg bg-green-900/40 border border-green-700 px-4 py-2 text-sm text-green-300">
           {success}
         </div>
       )}
@@ -460,29 +359,22 @@ export default function ProfilePage() {
               placeholder="e.g. React, TypeScript"
             />
 
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1">Experience Level</label>
-              <select
-                value={form.experience_level}
-                onChange={(e) => setForm((prev) => ({ ...prev, experience_level: e.target.value }))}
-                className="w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {EXPERIENCE_LEVELS.map((level) => (
-                  <option key={level} value={level}>
-                    {level.charAt(0).toUpperCase() + level.slice(1)}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Select
+              label="Experience Level"
+              value={form.experience_level}
+              onChange={(e) => setForm((prev) => ({ ...prev, experience_level: e.target.value }))}
+              options={EXPERIENCE_LEVELS}
+            />
           </div>
         </Card>
 
         <Card>
           <h2 className="text-lg font-semibold text-white mb-4">Salary & Location</h2>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Input
               label="Min Salary"
               type="number"
+              min={0}
               value={form.min_salary ?? ""}
               onChange={(e) => setForm((prev) => ({ ...prev, min_salary: e.target.value ? Number(e.target.value) : null }))}
               placeholder="50000"
@@ -490,6 +382,7 @@ export default function ProfilePage() {
             <Input
               label="Max Salary"
               type="number"
+              min={0}
               value={form.max_salary ?? ""}
               onChange={(e) => setForm((prev) => ({ ...prev, max_salary: e.target.value ? Number(e.target.value) : null }))}
               placeholder="120000"
@@ -512,7 +405,7 @@ export default function ProfilePage() {
                 type="checkbox"
                 checked={form.remote_only}
                 onChange={(e) => setForm((prev) => ({ ...prev, remote_only: e.target.checked }))}
-                className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-600 focus:ring-blue-500"
+                className="w-4 h-4 rounded border-slate-500 bg-slate-800 text-blue-600 focus-visible:ring-2 focus-visible:ring-blue-400"
               />
               <span className="text-sm text-slate-300">Remote only</span>
             </label>
@@ -535,7 +428,7 @@ export default function ProfilePage() {
                 type="checkbox"
                 checked={form.is_active}
                 onChange={(e) => setForm((prev) => ({ ...prev, is_active: e.target.checked }))}
-                className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-600 focus:ring-blue-500"
+                className="w-4 h-4 rounded border-slate-500 bg-slate-800 text-blue-600 focus-visible:ring-2 focus-visible:ring-blue-400"
               />
               <span className="text-sm text-slate-300">
                 Active — include my profile in job matching
@@ -544,31 +437,32 @@ export default function ProfilePage() {
           </div>
         </Card>
 
-        {/* Subir CV section */}
+        {/* Upload CV section */}
         <Card>
-          <h2 className="text-lg font-semibold text-white mb-4">Subir CV</h2>
+          <h2 className="text-lg font-semibold text-white mb-4">Upload CV</h2>
           <div className="space-y-4">
-            {/* Drop zone */}
-            <div
-              className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-600 p-8 cursor-pointer hover:border-blue-500 transition-colors"
-              onClick={() => document.getElementById("cv-file-input")?.click()}
-            >
-              <Upload className="h-8 w-8 text-slate-400 mb-2" />
-              <p className="text-sm text-slate-400 text-center">
-                Arrastra un PDF aquí o haz clic para seleccionar
+            <div className="flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed border-slate-500 p-8">
+              <Upload aria-hidden="true" className="h-8 w-8 text-slate-400" />
+              <p id={cvHintId} className="text-sm text-slate-400 text-center">
+                PDF only, up to 10 MB
               </p>
               <input
-                id="cv-file-input"
+                ref={cvInputRef}
+                id={cvInputId}
                 type="file"
                 accept=".pdf,application/pdf"
-                className="hidden"
+                aria-label="CV file"
+                aria-describedby={cvHintId}
+                className="sr-only"
                 onChange={handleCvFileSelect}
               />
+              <Button type="button" variant="secondary" onClick={() => cvInputRef.current?.click()}>
+                Choose PDF
+              </Button>
             </div>
 
-            {/* CV error */}
             {cvError && (
-              <p className="text-xs text-red-400">{cvError}</p>
+              <p role="alert" className="text-xs text-red-400">{cvError}</p>
             )}
 
             {/* Selected file info + upload button */}
@@ -579,16 +473,16 @@ export default function ProfilePage() {
                   <p className="text-xs text-slate-400">{formatFileSize(cvFile.size)}</p>
                 </div>
                 <Button type="button" variant="primary" onClick={handleCvUpload}>
-                  Subir
+                  Upload
                 </Button>
               </div>
             )}
 
             {/* Uploading state */}
             {cvUploading && (
-              <div className="flex items-center justify-center py-4">
+              <div role="status" className="flex items-center justify-center py-4">
                 <Button type="button" variant="primary" isLoading disabled>
-                  Subiendo...
+                  Uploading...
                 </Button>
               </div>
             )}
@@ -607,14 +501,14 @@ export default function ProfilePage() {
                       variant="secondary"
                       onClick={() => handleDownloadCv(cvResult.id)}
                     >
-                      Descargar
+                      Download
                     </Button>
                     <Button
                       type="button"
                       variant="danger"
                       onClick={() => handleDeleteCv(cvResult.id)}
                     >
-                      Eliminar
+                      Delete
                     </Button>
                   </div>
                 </div>
@@ -623,69 +517,53 @@ export default function ProfilePage() {
           </div>
         </Card>
 
-        {/* Importar perfil section */}
+        {/* Import profile section */}
         <Card>
-          <h2 className="text-lg font-semibold text-white mb-4">Importar perfil</h2>
+          <h2 className="text-lg font-semibold text-white mb-4">Import profile</h2>
           <div className="space-y-4">
-            {/* Provider selector */}
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">Proveedor</label>
+            <fieldset>
+              <legend className="mb-2 block text-sm font-medium text-slate-300">Provider</legend>
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setProvider("linkedin")}
-                  className={cn(
-                    "flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
-                    provider === "linkedin"
-                      ? "bg-blue-600 text-white"
-                      : "bg-slate-700 text-slate-300 hover:bg-slate-600",
-                  )}
-                >
-                  <Linkedin className="h-4 w-4" />
-                  LinkedIn
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setProvider("infojobs")}
-                  className={cn(
-                    "flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
-                    provider === "infojobs"
-                      ? "bg-blue-600 text-white"
-                      : "bg-slate-700 text-slate-300 hover:bg-slate-600",
-                  )}
-                >
-                  <Globe className="h-4 w-4" />
-                  Infojobs
-                </button>
+                {IMPORT_PROVIDERS.map(({ id, label, Icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setProvider(id)}
+                    aria-pressed={provider === id}
+                    className={cn(
+                      "flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
+                      focusRing,
+                      provider === id
+                        ? "bg-blue-600 text-white"
+                        : "bg-slate-700 text-slate-300 hover:bg-slate-600",
+                    )}
+                  >
+                    <Icon aria-hidden="true" className="h-4 w-4" />
+                    {label}
+                  </button>
+                ))}
               </div>
-            </div>
+            </fieldset>
 
-            {/* URL input */}
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1">URL del perfil</label>
-              <input
-                type="url"
-                value={importUrl}
-                onChange={(e) => {
-                  setImportUrl(e.target.value);
-                  if (importError) setImportError("");
-                }}
-                placeholder={
-                  provider === "linkedin"
-                    ? "https://linkedin.com/in/tu-perfil"
-                    : "https://infojobs.net/tu-perfil"
-                }
-                className={cn(
-                  "w-full rounded-lg border bg-slate-800 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500",
-                  importError ? "border-red-500" : "border-slate-600",
-                )}
-              />
-              {importError && <p className="mt-1 text-xs text-red-400">{importError}</p>}
-            </div>
+            <Input
+              label="Profile URL"
+              type="url"
+              value={importUrl}
+              error={importError}
+              onChange={(e) => {
+                setImportUrl(e.target.value);
+                if (importError) setImportError("");
+              }}
+              placeholder={
+                provider === "linkedin"
+                  ? "https://linkedin.com/in/your-profile"
+                  : "https://infojobs.net/your-profile"
+              }
+            />
 
             {/* Import button */}
             <Button type="button" variant="primary" isLoading={isImporting} onClick={handleImport}>
-              Importar
+              Import
             </Button>
           </div>
         </Card>
@@ -698,26 +576,23 @@ export default function ProfilePage() {
       </form>
 
       {/* Preview modal */}
-      <Modal isOpen={isPreviewOpen} onClose={() => setIsPreviewOpen(false)} title={previewMode === "cv" ? "Vista previa — CV parseado" : "Vista previa — Importar perfil"}>
+      <Modal isOpen={isPreviewOpen} onClose={() => setIsPreviewOpen(false)} title={previewMode === "cv" ? "Preview — Parsed CV" : "Preview — Imported profile"}>
         {editData && (
           <div className="space-y-6">
             {/* Headline */}
             <Input
-              label="Título profesional"
+              label="Professional headline"
               value={editData.headline ?? ""}
               onChange={(e) => updateEditField("headline", e.target.value || null)}
             />
 
             {/* Summary */}
-            <div className="space-y-1">
-              <label className="block text-sm font-medium text-slate-300">Resumen</label>
-              <textarea
-                value={editData.summary ?? ""}
-                onChange={(e) => updateEditField("summary", e.target.value || null)}
-                rows={4}
-                className="w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+            <Textarea
+              label="Summary"
+              value={editData.summary ?? ""}
+              onChange={(e) => updateEditField("summary", e.target.value || null)}
+              rows={4}
+            />
 
             {/* Skills */}
             <SkillTagInput
@@ -732,16 +607,16 @@ export default function ProfilePage() {
             />
 
             {/* Education */}
-            <div className="space-y-3">
+            <fieldset className="space-y-3">
               <div className="flex items-center justify-between">
-                <label className="block text-sm font-medium text-slate-300">Educación</label>
+                <legend className="text-sm font-medium text-slate-300">Education</legend>
                 <button
                   type="button"
                   onClick={addEducation}
-                  className="flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300"
+                  className={cn("flex items-center gap-1 rounded text-sm text-blue-400 hover:text-blue-300", focusRing)}
                 >
-                  <Plus className="h-3.5 w-3.5" />
-                  Agregar educación
+                  <Plus aria-hidden="true" className="h-3.5 w-3.5" />
+                  Add education
                 </button>
               </div>
               {editData.education.map((item, i) => (
@@ -749,67 +624,63 @@ export default function ProfilePage() {
                   <button
                     type="button"
                     onClick={() => removeEducation(i)}
-                    className="absolute top-2 right-2 text-slate-400 hover:text-red-400"
+                    aria-label={`Remove education entry ${i + 1}`}
+                    className={cn("absolute top-2 right-2 rounded text-slate-400 hover:text-red-400", focusRing)}
                   >
-                    <Trash2 className="h-4 w-4" />
+                    <Trash2 aria-hidden="true" className="h-4 w-4" />
                   </button>
-                  <div className="grid grid-cols-2 gap-3 pr-6">
+                  <div className="grid grid-cols-1 gap-3 pr-6 sm:grid-cols-2">
                     <Input
-                      label="Institución"
+                      label="Institution"
                       value={item.institution}
                       onChange={(e) => updateEducation(i, "institution", e.target.value)}
                     />
                     <Input
-                      label="Título"
+                      label="Degree"
                       value={item.degree}
                       onChange={(e) => updateEducation(i, "degree", e.target.value)}
                     />
                     <Input
-                      label="Campo"
+                      label="Field of study"
                       value={item.field ?? ""}
                       onChange={(e) => updateEducation(i, "field", e.target.value || null)}
                     />
                     <Input
-                      label="Fecha inicio"
+                      label="Start date"
                       type="text"
                       value={item.start_date}
                       onChange={(e) => updateEducation(i, "start_date", e.target.value)}
                     />
                     <Input
-                      label="Fecha fin"
+                      label="End date"
                       type="text"
                       value={item.end_date ?? ""}
                       onChange={(e) => updateEducation(i, "end_date", e.target.value || null)}
                     />
                   </div>
                   <div className="mt-3">
-                    <label className="block text-sm font-medium text-slate-300 mb-1">
-                      Descripción
-                    </label>
-                    <textarea
+                    <Textarea
+                      label="Description"
                       value={item.description ?? ""}
                       onChange={(e) => updateEducation(i, "description", e.target.value || null)}
                       rows={2}
-                      className="w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
                 </Card>
               ))}
-            </div>
+            </fieldset>
 
             {/* Work Experience */}
-            <div className="space-y-3">
+            <fieldset className="space-y-3">
               <div className="flex items-center justify-between">
-                <label className="block text-sm font-medium text-slate-300">
-                  Experiencia laboral
-                </label>
+                <legend className="text-sm font-medium text-slate-300">Work experience</legend>
                 <button
                   type="button"
                   onClick={addExperience}
-                  className="flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300"
+                  className={cn("flex items-center gap-1 rounded text-sm text-blue-400 hover:text-blue-300", focusRing)}
                 >
-                  <Plus className="h-3.5 w-3.5" />
-                  Agregar experiencia
+                  <Plus aria-hidden="true" className="h-3.5 w-3.5" />
+                  Add experience
                 </button>
               </div>
               {editData.work_experience.map((item, i) => (
@@ -817,29 +688,30 @@ export default function ProfilePage() {
                   <button
                     type="button"
                     onClick={() => removeExperience(i)}
-                    className="absolute top-2 right-2 text-slate-400 hover:text-red-400"
+                    aria-label={`Remove experience entry ${i + 1}`}
+                    className={cn("absolute top-2 right-2 rounded text-slate-400 hover:text-red-400", focusRing)}
                   >
-                    <Trash2 className="h-4 w-4" />
+                    <Trash2 aria-hidden="true" className="h-4 w-4" />
                   </button>
-                  <div className="grid grid-cols-2 gap-3 pr-6">
+                  <div className="grid grid-cols-1 gap-3 pr-6 sm:grid-cols-2">
                     <Input
-                      label="Empresa"
+                      label="Company"
                       value={item.company}
                       onChange={(e) => updateExperience(i, "company", e.target.value)}
                     />
                     <Input
-                      label="Cargo"
+                      label="Role"
                       value={item.role}
                       onChange={(e) => updateExperience(i, "role", e.target.value)}
                     />
                     <Input
-                      label="Fecha inicio"
+                      label="Start date"
                       type="text"
                       value={item.start_date}
                       onChange={(e) => updateExperience(i, "start_date", e.target.value)}
                     />
                     <Input
-                      label="Fecha fin"
+                      label="End date"
                       type="text"
                       value={item.end_date ?? ""}
                       onChange={(e) => updateExperience(i, "end_date", e.target.value || null)}
@@ -851,29 +723,24 @@ export default function ProfilePage() {
                         type="checkbox"
                         checked={item.current}
                         onChange={(e) => updateExperience(i, "current", e.target.checked)}
-                        className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-600 focus:ring-blue-500"
+                        className="w-4 h-4 rounded border-slate-500 bg-slate-800 text-blue-600 focus-visible:ring-2 focus-visible:ring-blue-400"
                       />
-                      <span className="text-sm text-slate-300">Trabajo actual</span>
+                      <span className="text-sm text-slate-300">Current job</span>
                     </label>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-300 mb-1">
-                        Descripción
-                      </label>
-                      <textarea
-                        value={item.description ?? ""}
-                        onChange={(e) => updateExperience(i, "description", e.target.value || null)}
-                        rows={2}
-                        className="w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
+                    <Textarea
+                      label="Description"
+                      value={item.description ?? ""}
+                      onChange={(e) => updateExperience(i, "description", e.target.value || null)}
+                      rows={2}
+                    />
                   </div>
                 </Card>
               ))}
-            </div>
+            </fieldset>
 
             {/* Save error */}
             {saveError && (
-              <div className="rounded-lg bg-red-900/40 border border-red-700 px-4 py-2 text-sm text-red-300">
+              <div role="alert" className="rounded-lg bg-red-900/40 border border-red-700 px-4 py-2 text-sm text-red-300">
                 {saveError}
               </div>
             )}
@@ -881,7 +748,7 @@ export default function ProfilePage() {
             {/* Modal footer buttons */}
             <div className="flex justify-end gap-3 pt-4 border-t border-slate-700">
               <Button type="button" variant="secondary" onClick={() => setIsPreviewOpen(false)}>
-                Cancelar
+                Cancel
               </Button>
               {previewMode === "cv" ? (
                 <Button
@@ -890,7 +757,7 @@ export default function ProfilePage() {
                   isLoading={previewMutation.isPending}
                   onClick={handlePreviewSave}
                 >
-                  Guardar en perfil
+                  Save to profile
                 </Button>
               ) : (
                 <Button
@@ -899,7 +766,7 @@ export default function ProfilePage() {
                   isLoading={previewMutation.isPending}
                   onClick={handlePreviewSave}
                 >
-                  Guardar
+                  Save
                 </Button>
               )}
             </div>

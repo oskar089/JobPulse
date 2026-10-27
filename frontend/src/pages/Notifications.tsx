@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   listNotifications,
@@ -6,11 +6,14 @@ import {
   getNotificationPreferences,
   updateNotificationPreferences,
 } from "../lib/notifications";
+import { cn, focusRing } from "../lib/utils";
 import { Card } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
 import { Toggle } from "../components/ui/Toggle";
 import { Bell, CheckCircle, Check } from "lucide-react";
 import type { NotificationPreferences } from "../types";
+
+const SAVED_MESSAGE_MS = 2500;
 
 function timeAgo(dateStr: string): string {
   const now = Date.now();
@@ -64,13 +67,16 @@ const PREFERENCE_LABELS: { key: keyof NotificationPreferences; label: string; de
 export default function NotificationsPage() {
   const queryClient = useQueryClient();
   const [showSaved, setShowSaved] = useState(false);
+  const savedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  const { data: notifications, isLoading } = useQuery({
+  useEffect(() => () => clearTimeout(savedTimer.current), []);
+
+  const { data: notifications, isLoading, isError } = useQuery({
     queryKey: ["notifications"],
     queryFn: listNotifications,
   });
 
-  const { data: preferences } = useQuery({
+  const { data: preferences, isError: preferencesError } = useQuery({
     queryKey: ["notification-preferences"],
     queryFn: getNotificationPreferences,
   });
@@ -84,15 +90,18 @@ export default function NotificationsPage() {
 
   const updatePrefsMutation = useMutation({
     mutationFn: updateNotificationPreferences,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["notification-preferences"] });
+    onSuccess: (saved) => {
+      // Write the saved value straight into the cache so the next toggle never reads stale preferences
+      queryClient.setQueryData(["notification-preferences"], saved);
       setShowSaved(true);
-      setTimeout(() => setShowSaved(false), 2500);
+      clearTimeout(savedTimer.current);
+      savedTimer.current = setTimeout(() => setShowSaved(false), SAVED_MESSAGE_MS);
     },
   });
 
   const handleToggle = (key: keyof NotificationPreferences) => {
     if (!preferences) return;
+    setShowSaved(false);
     updatePrefsMutation.mutate({
       ...preferences,
       [key]: !preferences[key],
@@ -100,7 +109,12 @@ export default function NotificationsPage() {
   };
 
   if (isLoading) {
-    return <div className="text-sm text-slate-400">Loading notifications...</div>;
+    return (
+      <>
+        <h1 className="sr-only">Notifications</h1>
+        <p role="status" className="text-sm text-slate-400">Loading notifications...</p>
+      </>
+    );
   }
 
   const sorted = notifications
@@ -120,97 +134,132 @@ export default function NotificationsPage() {
       <Card className="mb-8">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold text-white">Notification Preferences</h2>
-          {showSaved && (
-            <span className="flex items-center gap-1 text-xs text-green-400">
-              <Check className="h-3.5 w-3.5" />
-              Preferences saved
-            </span>
-          )}
+          <span role="status" className="flex items-center gap-1 text-xs text-green-400">
+            {showSaved && (
+              <>
+                <Check aria-hidden="true" className="h-3.5 w-3.5" />
+                Preferences saved
+              </>
+            )}
+          </span>
         </div>
         <p className="mb-4 mt-1 text-xs text-slate-400">
           Choose which notification types and channels you want to receive.
         </p>
-        <div className="space-y-3">
+        <div role="alert">
+          {preferencesError && (
+            <p className="mb-3 text-sm text-red-400">Could not load your preferences.</p>
+          )}
+          {updatePrefsMutation.isError && (
+            <p className="mb-3 text-sm text-red-400">
+              Could not save your preferences: {updatePrefsMutation.error.message}
+            </p>
+          )}
+        </div>
+        <ul className="space-y-3">
           {PREFERENCE_LABELS.map(({ key, label, description }) => (
-            <div key={key} className="flex items-center justify-between">
+            <li key={key} className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-sm text-slate-200">{label}</p>
-                <p className="text-xs text-slate-500">{description}</p>
+                <p className="text-xs text-slate-400">{description}</p>
               </div>
               <Toggle
+                label={label}
                 checked={preferences?.[key] ?? false}
                 onChange={() => handleToggle(key)}
-                disabled={updatePrefsMutation.isPending}
+                disabled={!preferences || updatePrefsMutation.isPending}
               />
-            </div>
+            </li>
           ))}
-        </div>
+        </ul>
       </Card>
 
       {/* Notifications List */}
+      <h2 className="sr-only">Notification history</h2>
+      <div role="alert">
+        {isError && <p className="mb-3 text-sm text-red-400">Could not load notifications.</p>}
+        {markReadMutation.isError && (
+          <p className="mb-3 text-sm text-red-400">
+            Could not mark the notification as read: {markReadMutation.error.message}
+          </p>
+        )}
+      </div>
       {sorted.length === 0 ? (
         <Card>
-          <div className="flex flex-col items-center justify-center py-16 text-slate-500">
-            <Bell className="mb-3 h-12 w-12 opacity-40" />
+          <div className="flex flex-col items-center justify-center py-16 text-slate-400">
+            <Bell aria-hidden="true" className="mb-3 h-12 w-12 opacity-40" />
             <p className="text-sm font-medium">No notifications yet</p>
-            <p className="mt-1 text-xs text-slate-600">
-              You'll get notified when new jobs match your profile
+            <p className="mt-1 text-xs">
+              You&apos;ll get notified when new jobs match your profile
             </p>
           </div>
         </Card>
       ) : (
-        <div className="space-y-3">
+        <ul className="space-y-3">
           {sorted.map((notification) => (
-            <div
+            <li
               key={notification.id}
-              className={`cursor-pointer rounded-lg border p-4 transition-colors ${
+              className={cn(
+                "rounded-lg border p-4 transition-colors",
                 notification.is_read
                   ? "border-slate-700 bg-slate-800/50"
-                  : "border-blue-700/50 bg-slate-800"
-              }`}
-              onClick={() => {
-                if (!notification.is_read) {
-                  markReadMutation.mutate(notification.id);
-                }
-              }}
+                  : "border-blue-700/50 bg-slate-800",
+              )}
             >
               <div className="flex items-start gap-3">
-                <div
-                  className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
-                    notification.is_read ? "bg-slate-600" : "bg-blue-500"
-                  }`}
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "mt-1.5 h-2 w-2 shrink-0 rounded-full",
+                    notification.is_read ? "bg-slate-600" : "bg-blue-500",
+                  )}
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <h3
-                      className={`truncate text-sm font-medium ${
-                        notification.is_read ? "text-slate-400" : "text-white"
-                      }`}
+                      className={cn(
+                        "truncate text-sm font-medium",
+                        notification.is_read ? "text-slate-400" : "text-white",
+                      )}
                     >
+                      <span className="sr-only">{notification.is_read ? "Read: " : "Unread: "}</span>
                       {notification.title}
                     </h3>
                     <Badge variant={typeVariants[notification.type] || "default"}>
                       {notification.type}
                     </Badge>
                     {notification.is_read && (
-                      <CheckCircle className="h-3.5 w-3.5 shrink-0 text-green-400" />
+                      <CheckCircle aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-green-400" />
                     )}
                   </div>
-                  <p
-                    className={`mt-1 line-clamp-2 text-xs ${
-                      notification.is_read ? "text-slate-500" : "text-slate-400"
-                    }`}
-                  >
+                  <p className="mt-1 line-clamp-2 text-xs text-slate-400">
                     {notification.body}
                   </p>
-                  <p className="mt-1.5 text-xs text-slate-600">
-                    {timeAgo(notification.sent_at)}
-                  </p>
+                  <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+                    <time dateTime={notification.sent_at} className="text-xs text-slate-400">
+                      {timeAgo(notification.sent_at)}
+                    </time>
+                    {!notification.is_read && (
+                      <button
+                        type="button"
+                        onClick={() => markReadMutation.mutate(notification.id)}
+                        disabled={markReadMutation.isPending && markReadMutation.variables === notification.id}
+                        className={cn(
+                          "flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-blue-400 transition-colors hover:bg-slate-700 hover:text-blue-300 disabled:opacity-50",
+                          focusRing,
+                        )}
+                      >
+                        <Check aria-hidden="true" className="h-3 w-3" />
+                        Mark as read
+                        <span className="sr-only">: {notification.title}</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
     </div>
   );
