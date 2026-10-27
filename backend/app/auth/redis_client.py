@@ -25,10 +25,16 @@ async def get_redis() -> Redis:
     return Redis.from_url(settings.redis_url, decode_responses=True)
 
 
-async def _run_security_operation(operation: Awaitable[T], description: str) -> T:
-    """Execute a Redis security operation and fail closed on outages."""
+async def _run_security_operation(operation: Awaitable[T] | T, description: str) -> T:
+    """Execute a Redis security operation and fail closed on outages.
+
+    redis-py annotates its async commands as ``Awaitable[T] | T`` because the
+    same signatures serve the sync client, so both shapes are accepted here.
+    """
     try:
-        return await operation
+        if isinstance(operation, Awaitable):
+            return await operation
+        return operation
     except RedisError as exc:
         logger.error("Redis authentication operation failed: %s", description)
         raise AuthStoreUnavailableError("Authentication store unavailable") from exc
