@@ -6,7 +6,7 @@ export function listNotifications(): Promise<Notification[]> {
 }
 
 export function markNotificationRead(id: string): Promise<void> {
-  return api<void>(`/notifications/${id}/read`, { method: "PATCH" });
+  return api<void>(`/notifications/${encodeURIComponent(id)}/read`, { method: "PATCH" });
 }
 
 export function getNotificationPreferences(): Promise<NotificationPreferences> {

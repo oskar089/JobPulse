@@ -145,6 +145,22 @@ export interface PortalCreate {
   scrape_interval_min?: number;
 }
 
+export interface DryRunJob {
+  title: string;
+  company: string;
+  location: string | null;
+  description: string;
+  url: string;
+  salary_range: string | null;
+  posted_at: string | null;
+}
+
+export interface DryRunResult {
+  status: string;
+  jobs: DryRunJob[];
+  error?: string;
+}
+
 export interface Notification {
   id: string;
   user_id: string;
