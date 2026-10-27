@@ -1,7 +1,5 @@
-import ipaddress
 import logging
 from typing import Any
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import or_, select
@@ -11,9 +9,11 @@ from app.auth.router import get_current_user_id
 from app.database import get_session
 from app.middleware.rate_limit import limiter
 from app.models import Portal
+from app.portals.dedup import dedupe_portals_by_name
 from app.portals.schemas import PortalCreate, PortalResponse, PortalUpdate
 from app.scrapers.engine import PortalSelectors as EngineSelectors
 from app.scrapers.engine import ScraperEngine
+from app.security.url_guard import UnsafeURLError, assert_public_url
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,20 @@ async def _get_portal_or_404(
             detail="Portal not found",
         )
     return portal
+
+
+async def _assert_public_urls(*urls: str | None) -> None:
+    """Raise 422 if any URL resolves to a private or reserved destination."""
+    for url in urls:
+        if not url:
+            continue
+        try:
+            await assert_public_url(url)
+        except UnsafeURLError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
 
 
 def _assert_owner(portal: Portal, user_id: str) -> None:
@@ -60,28 +74,16 @@ async def list_portals(
     the user's version wins (they may have customized selectors).
     """
     result = await session.execute(
-        select(Portal).where(
+        select(Portal)
+        .where(
             or_(
                 Portal.user_id == user_id,
                 Portal.user_id.is_(None),
             ),
-        ).order_by(Portal.name),
+        )
+        .order_by(Portal.name),
     )
-    portals = result.scalars().all()
-
-    # Deduplicate by name: user-owned portals override built-in ones
-    seen: dict[str, Portal] = {}
-    for p in portals:
-        if p.name in seen:
-            # If the existing entry is built-in and this one is user-owned, swap
-            existing = seen[p.name]
-            if existing.is_builtin and not p.is_builtin:
-                seen[p.name] = p
-            # Otherwise keep the first one (both built-in or both user-owned)
-        else:
-            seen[p.name] = p
-
-    return list(seen.values())
+    return dedupe_portals_by_name(result.scalars().all())
 
 
 @router.post("", response_model=PortalResponse, status_code=status.HTTP_201_CREATED)
@@ -93,6 +95,7 @@ async def create_portal(
     session: AsyncSession = Depends(get_session),
 ):
     """Create a new portal configuration for the current user."""
+    await _assert_public_urls(str(body.base_url), str(body.job_listing_url))
     portal = Portal(
         user_id=user_id,
         name=body.name,
@@ -129,7 +132,15 @@ async def update_portal(
     portal = await _get_portal_or_404(portal_id, session)
     _assert_owner(portal, user_id)
 
+    await _assert_public_urls(
+        str(body.base_url) if body.base_url else None,
+        str(body.job_listing_url) if body.job_listing_url else None,
+    )
+
     update_data = body.model_dump(exclude_unset=True)
+    for url_field in ("base_url", "job_listing_url"):
+        if update_data.get(url_field) is not None:
+            update_data[url_field] = str(update_data[url_field])
     if "selectors" in update_data and body.selectors is not None:
         update_data["selectors"] = body.selectors.model_dump()
 
@@ -188,23 +199,7 @@ async def dry_run_portal(
     portal = await _get_portal_or_404(portal_id, session)
     _assert_owner(portal, user_id)
 
-    # Validate test_url against SSRF attacks
-    if test_url:
-        parsed = urlparse(test_url)
-        if parsed.scheme not in ("http", "https"):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Invalid URL scheme. Only http and https are allowed.",
-            )
-        try:
-            addr = ipaddress.ip_address(parsed.hostname)
-            if addr.is_private or addr.is_loopback or addr.is_link_local:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="URL points to a private or reserved IP address.",
-                )
-        except ValueError:
-            pass  # hostname is a domain name, not an IP — OK
+    await _assert_public_urls(test_url)
 
     # Build engine‑compatible selectors from the stored JSON
     raw: dict[str, Any] = portal.selectors

@@ -5,7 +5,6 @@ Protected by require_admin dependency — all routes require role='admin' in JWT
 
 from __future__ import annotations
 
-import asyncio
 import math
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -84,10 +83,7 @@ def _compute_jobs_metrics(jobs: list, portals: dict[str, str]) -> JobsMetrics:
 
     result: dict[str, list[PortalTimeSeries]] = {}
     for portal_name, daily in sorted(by_portal.items()):
-        result[portal_name] = [
-            PortalTimeSeries(date=d, count=c)
-            for d, c in sorted(daily.items())
-        ]
+        result[portal_name] = [PortalTimeSeries(date=d, count=c) for d, c in sorted(daily.items())]
 
     return JobsMetrics(total_scraped=len(jobs), by_portal=result)
 
@@ -99,10 +95,7 @@ def _compute_applications_metrics(apps: list) -> ApplicationsMetrics:
         day = app.created_at.strftime("%Y-%m-%d") if app.created_at else "unknown"
         daily[day] += 1
 
-    timeseries = [
-        PortalTimeSeries(date=d, count=c)
-        for d, c in sorted(daily.items())
-    ]
+    timeseries = [PortalTimeSeries(date=d, count=c) for d, c in sorted(daily.items())]
     return ApplicationsMetrics(total_submitted=len(apps), timeseries=timeseries)
 
 
@@ -165,11 +158,9 @@ async def get_analytics(
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
-    # Run 4 queries in parallel
+    # A single AsyncSession cannot run concurrent statements, so query sequentially.
     async def fetch_pipeline_runs():
-        result = await session.execute(
-            select(PipelineRun).where(PipelineRun.created_at >= cutoff)
-        )
+        result = await session.execute(select(PipelineRun).where(PipelineRun.created_at >= cutoff))
         return list(result.scalars().all())
 
     async def fetch_portals():
@@ -177,31 +168,24 @@ async def get_analytics(
         return {p.id: p.name for p in result.scalars().all()}
 
     async def fetch_jobs():
-        result = await session.execute(
-            select(StoredJob).where(StoredJob.scraped_at >= cutoff)
-        )
+        result = await session.execute(select(StoredJob).where(StoredJob.scraped_at >= cutoff))
         return list(result.scalars().all())
 
     async def fetch_apps():
-        result = await session.execute(
-            select(Application).where(Application.created_at >= cutoff)
-        )
+        result = await session.execute(select(Application).where(Application.created_at >= cutoff))
         return list(result.scalars().all())
 
-    runs, portals, jobs, apps = await asyncio.gather(
-        fetch_pipeline_runs(), fetch_portals(), fetch_jobs(), fetch_apps()
-    )
+    runs = await fetch_pipeline_runs()
+    portals = await fetch_portals()
+    jobs = await fetch_jobs()
+    apps = await fetch_apps()
 
     pipeline = _compute_pipeline_metrics(runs)
     jobs_metrics = _compute_jobs_metrics(jobs, portals)
     applications = _compute_applications_metrics(apps)
     portals_perf = _compute_portal_performance(jobs, apps, portals)
 
-    conversion_rate = (
-        round(100.0 * pipeline.completed / len(runs), 1)
-        if len(runs) > 0
-        else 0.0
-    )
+    conversion_rate = round(100.0 * pipeline.completed / len(runs), 1) if len(runs) > 0 else 0.0
 
     return AnalyticsResponse(
         pipeline=pipeline,

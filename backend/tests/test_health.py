@@ -32,9 +32,11 @@ class TestHealthEndpoint:
         mock_celery = MagicMock()
         mock_celery.control.ping.return_value = [{"ok": "pong"}]
 
-        with patch("app.main.engine", mock_engine), \
-             patch("app.auth.redis_client.get_redis", return_value=mock_redis), \
-             patch("app.main.celery_app", mock_celery):
+        with (
+            patch("app.main.engine", mock_engine),
+            patch("app.auth.redis_client.get_redis", return_value=mock_redis),
+            patch("app.main.celery_app", mock_celery),
+        ):
             yield
 
     async def test_all_services_healthy(self, async_client: AsyncClient):
@@ -97,17 +99,17 @@ class TestHealthEndpoint:
     async def test_multiple_failures_reported(self, async_client: AsyncClient):
         """When multiple services fail, all are reported as unhealthy."""
         mock_conn = AsyncMock()
-        mock_conn.__aenter__.return_value.execute = AsyncMock(
-            side_effect=Exception("DB timeout")
-        )
+        mock_conn.__aenter__.return_value.execute = AsyncMock(side_effect=Exception("DB timeout"))
         mock_engine = MagicMock()
         mock_engine.connect.return_value = mock_conn
 
         mock_broken_redis = AsyncMock()
         mock_broken_redis.ping = AsyncMock(side_effect=Exception("Redis down"))
 
-        with patch("app.main.engine", mock_engine), \
-             patch("app.auth.redis_client.get_redis", return_value=mock_broken_redis):
+        with (
+            patch("app.main.engine", mock_engine),
+            patch("app.auth.redis_client.get_redis", return_value=mock_broken_redis),
+        ):
             response = await async_client.get("/health")
             assert response.status_code == 503
             data = response.json()

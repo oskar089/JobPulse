@@ -109,10 +109,14 @@ class NotificationService:
             ) as smtp:
                 await smtp.starttls()
                 await smtp.quit()
-            logger.info("SMTP connectivity check passed for %s:%s", settings.smtp_host, settings.smtp_port)
+            logger.info(
+                "SMTP connectivity check passed for %s:%s", settings.smtp_host, settings.smtp_port
+            )
             return True
         except Exception as exc:
-            logger.warning("SMTP server unreachable at %s:%s — %s", settings.smtp_host, settings.smtp_port, exc)
+            logger.warning(
+                "SMTP server unreachable at %s:%s — %s", settings.smtp_host, settings.smtp_port, exc
+            )
             return False
 
     async def notify_application_submitted(

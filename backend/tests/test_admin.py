@@ -8,12 +8,22 @@ Covers Phase 3 tasks (3.3, 3.5):
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
 
-import pytest
+import pytest_asyncio
 from httpx import AsyncClient
+from sqlalchemy import text
 
 from app.auth.utils import create_access_token
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def make_actor_admin(db_session, test_user):
+    """Admin endpoint tests use a database-backed administrator actor."""
+    await db_session.execute(
+        text('UPDATE "user" SET role = :role WHERE id = :id'),
+        {"role": "admin", "id": test_user.id},
+    )
+    await db_session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -53,8 +63,15 @@ class TestRequireAdmin:
         # Should be 200 (or at least not 401/403)
         assert response.status_code == 200
 
-    async def test_non_admin_blocked_by_role_check(self, async_client: AsyncClient, test_user):
-        """Non-admin user with role='user' gets 403."""
+    async def test_non_admin_blocked_by_role_check(
+        self, async_client: AsyncClient, test_user, db_session
+    ):
+        """A user whose stored role is 'user' gets 403, whatever the token claims."""
+        await db_session.execute(
+            text('UPDATE "user" SET role = :role WHERE id = :id'),
+            {"role": "user", "id": test_user.id},
+        )
+        await db_session.commit()
         token = _user_token(user_id=test_user.id)
         response = await async_client.get(
             "/api/admin/analytics",
@@ -129,19 +146,27 @@ class TestAdminAnalytics:
         assert "conversion_rate" in data
         assert "window" in data
 
-    async def test_analytics_with_seeded_data(self, async_client: AsyncClient, db_session, test_user):
+    async def test_analytics_with_seeded_data(
+        self, async_client: AsyncClient, db_session, test_user
+    ):
         """With seeded pipeline runs, metrics calculate correctly."""
-        from app.models import PipelineRun, Portal, StoredJob, Application
         import uuid as _uuid
 
         # Create a portal
         portal_id = str(_uuid.uuid4())
         await db_session.execute(
             __import__("sqlalchemy").text(
-                "INSERT INTO portal (id, name, base_url, job_listing_url, selectors, is_builtin, is_enabled, is_verified, scrape_interval_min) "
+                "INSERT INTO portal "
+                "(id, name, base_url, job_listing_url, selectors, is_builtin, "
+                "is_enabled, is_verified, scrape_interval_min) "
                 "VALUES (:id, :name, :base_url, :job_url, '{}', 0, 1, 0, 60)"
             ),
-            {"id": portal_id, "name": "LinkedIn", "base_url": "https://linkedin.com", "job_url": "https://linkedin.com/jobs"},
+            {
+                "id": portal_id,
+                "name": "LinkedIn",
+                "base_url": "https://linkedin.com",
+                "job_url": "https://linkedin.com/jobs",
+            },
         )
         await db_session.flush()
 
@@ -209,6 +234,7 @@ class TestAdminUsers:
     async def test_users_pagination(self, async_client: AsyncClient, db_session, test_user):
         """With 25 users, page=1 limit=20 returns 20, total=25."""
         import uuid as _uuid
+
         from app.auth.utils import hash_password
 
         # Seed 24 additional users
@@ -216,7 +242,7 @@ class TestAdminUsers:
             uid = str(_uuid.uuid4())
             await db_session.execute(
                 __import__("sqlalchemy").text(
-                    "INSERT INTO \"user\" (id, email, name, password_hash, role) "
+                    'INSERT INTO "user" (id, email, name, password_hash, role) '
                     "VALUES (:id, :email, :name, :pwd, 'user')"
                 ),
                 {
@@ -252,12 +278,13 @@ class TestAdminRoleToggle:
     async def test_promote_user_to_admin(self, async_client: AsyncClient, db_session, test_user):
         """Promote a regular user to admin."""
         import uuid as _uuid
+
         from app.auth.utils import hash_password
 
         target_id = str(_uuid.uuid4())
         await db_session.execute(
             __import__("sqlalchemy").text(
-                "INSERT INTO \"user\" (id, email, name, password_hash, role) "
+                'INSERT INTO "user" (id, email, name, password_hash, role) '
                 "VALUES (:id, :email, :name, :pwd, 'user')"
             ),
             {
@@ -303,15 +330,18 @@ class TestAdminRoleToggle:
         assert response.status_code == 404
         assert "User not found" in response.json()["detail"]
 
-    async def test_invalid_role_value_rejected(self, async_client: AsyncClient, db_session, test_user):
+    async def test_invalid_role_value_rejected(
+        self, async_client: AsyncClient, db_session, test_user
+    ):
         """Invalid role value is rejected by Pydantic validation."""
         import uuid as _uuid
+
         from app.auth.utils import hash_password
 
         target_id = str(_uuid.uuid4())
         await db_session.execute(
             __import__("sqlalchemy").text(
-                "INSERT INTO \"user\" (id, email, name, password_hash, role) "
+                'INSERT INTO "user" (id, email, name, password_hash, role) '
                 "VALUES (:id, :email, :name, :pwd, 'user')"
             ),
             {

@@ -4,8 +4,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.scrapers.stealth import apply_stealth, calculate_backoff
+from app.security.url_guard import UnsafeURLError, assert_public_url
 
 logger = logging.getLogger(__name__)
+
+# Browser-internal URLs that never leave the page, so they cannot reach the network.
+_INLINE_SCHEMES = ("data:", "blob:", "about:")
 
 
 @dataclass
@@ -57,8 +61,8 @@ class ScraperEngine:
         self.timeout = timeout
         self._linkedin_email = linkedin_email
         self._linkedin_password = linkedin_password
-        self._browser = None
-        self._playwright = None
+        self._browser: Any | None = None
+        self._playwright: Any | None = None
 
     async def _get_browser(self) -> Any:
         """Lazy-init the Playwright browser instance."""
@@ -82,6 +86,8 @@ class ScraperEngine:
         Retries up to 5 times with exponential backoff and jitter.
         If all stealth retries fail, falls back to non-stealth mode once.
         """
+        await assert_public_url(url)
+
         last_error: Exception | None = None
         use_stealth = True
 
@@ -183,6 +189,8 @@ class ScraperEngine:
         )
 
         try:
+            await context.route("**/*", self._guard_request)
+
             # Inject stealth before any navigation (Task 5.2)
             if use_stealth:
                 try:
@@ -222,6 +230,20 @@ class ScraperEngine:
                     await page.close()
         finally:
             await context.close()
+
+    @staticmethod
+    async def _guard_request(route: Any) -> None:
+        """Abort any browser request (including redirects) to a non-public host."""
+        if route.request.url.startswith(_INLINE_SCHEMES):
+            await route.continue_()
+            return
+        try:
+            await assert_public_url(route.request.url)
+        except UnsafeURLError:
+            logger.warning("Blocked browser request to non-public URL: %s", route.request.url)
+            await route.abort("blockedbyclient")
+            return
+        await route.continue_()
 
     async def _extract_job(
         self,

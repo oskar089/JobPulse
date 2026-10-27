@@ -2,15 +2,14 @@ import logging
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-logger = logging.getLogger(__name__)
 
 from app.auth.router import get_current_user_id
 from app.config import settings
 from app.database import get_session
+from app.middleware.rate_limit import limiter
 from app.models import CurriculumVitae, Profile
 from app.profiles.cv_parser import CVParser
 from app.profiles.file_storage import FileStorageService, validate_file
@@ -25,9 +24,15 @@ from app.profiles.schemas import (
     ProfileUpdate,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/profiles", tags=["profiles"])
 
 _MAX_CV_SIZE = 10 * 1024 * 1024  # 10 MB
+
+# Browser-driven imports and LLM parsing are expensive, so throttle them per client.
+SCRAPE_RATE_LIMIT = "5/minute"
+CV_UPLOAD_RATE_LIMIT = "10/minute"
 
 
 @router.get("", response_model=ProfileResponse)
@@ -84,7 +89,9 @@ async def upsert_profile(
 
 
 @router.post("/import/linkedin", response_model=ImportedProfile)
+@limiter.limit(SCRAPE_RATE_LIMIT)
 async def import_linkedin(
+    request: Request,
     body: ImportUrlRequest,
     user_id: str = Depends(get_current_user_id),  # noqa: ARG001
 ):
@@ -130,11 +137,15 @@ async def import_linkedin(
             if "login" in msg.lower():
                 raise HTTPException(status_code=401, detail=msg)
             logger.error("LinkedIn scrape failed for URL %s: %s", body.url, e)
-            raise HTTPException(status_code=502, detail="LinkedIn scrape failed. Check the URL and try again.")
+            raise HTTPException(
+                status_code=502, detail="LinkedIn scrape failed. Check the URL and try again."
+            )
 
 
 @router.post("/import/infojobs", response_model=ImportedProfile)
+@limiter.limit(SCRAPE_RATE_LIMIT)
 async def import_infojobs(
+    request: Request,
     body: ImportUrlRequest,
     user_id: str = Depends(get_current_user_id),  # noqa: ARG001
 ):
@@ -143,7 +154,12 @@ async def import_infojobs(
     Returns parsed fields for the user to review before saving.
     """
     parsed = urlparse(str(body.url))
-    if parsed.netloc not in ("infojobs.com", "www.infojobs.com", "infojobs.com.ar", "www.infojobs.com.ar"):
+    if parsed.netloc not in (
+        "infojobs.com",
+        "www.infojobs.com",
+        "infojobs.com.ar",
+        "www.infojobs.com.ar",
+    ):
         raise HTTPException(
             status_code=422,
             detail=f"Invalid Infojobs URL: '{body.url}'. URL must be a valid infojobs.com URL.",
@@ -153,7 +169,7 @@ async def import_infojobs(
 
     scraper = InfojobsProfileScraper()
     try:
-        return await scraper.parse_profile(body.url)
+        return await scraper.parse_profile(str(body.url))
     except Exception as e:
         logger.error("Infojobs scrape failed for URL %s: %s", body.url, e)
         raise HTTPException(
@@ -207,7 +223,9 @@ async def preview_save(
 
 
 @router.post("/cv/upload", response_model=CVParseResult)
+@limiter.limit(CV_UPLOAD_RATE_LIMIT)
 async def upload_cv(
+    request: Request,
     file: UploadFile = File(...),
     user_id: str = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_session),
@@ -215,7 +233,7 @@ async def upload_cv(
     """Upload a CV PDF, parse its content, and persist the file.
 
     Validates that the file is a PDF and does not exceed 10 MB.
-    Parses the content via OpenAI and returns extracted fields for preview.
+    Parses the content via the configured LLM and returns fields for preview.
     """
     # --- Validate file (extension, content-type, magic bytes) ---
     await validate_file(file)
@@ -234,19 +252,18 @@ async def upload_cv(
     cv_meta = await storage.save(file, user_id)
 
     try:
-        # --- Parse CV via OpenAI ---
+        # --- Parse CV via LLM ---
         file_path = str(Path(settings.upload_dir) / f"{cv_meta.id}.pdf")
         parser = CVParser()
         try:
             parse_result = await parser.parse_cv(file_path)
-        except Exception:
-            # File saved but parsing failed — return metadata without parsed data
-            parse_result = CVParseResult(
-                id=cv_meta.id,
-                file_name=cv_meta.filename,
-                file_size=cv_meta.file_size,
-                parsed_data=ImportedProfile(),
-            )
+        except Exception as exc:
+            logger.exception("CV parsing failed for %s", cv_meta.filename)
+            # The outer handler removes the file when parsing fails.
+            raise HTTPException(
+                status_code=502,
+                detail="CV parsing failed; upload could not be completed. Please try again.",
+            ) from exc
 
         # --- Create DB record ---
         cv_record = CurriculumVitae(
@@ -256,9 +273,7 @@ async def upload_cv(
             file_path=file_path,
             file_size=cv_meta.file_size,
             parsed_data=(
-                parse_result.parsed_data.model_dump()
-                if parse_result.parsed_data
-                else None
+                parse_result.parsed_data.model_dump() if parse_result.parsed_data else None
             ),
         )
         session.add(cv_record)

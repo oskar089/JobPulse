@@ -20,7 +20,7 @@ from playwright.async_api import Page, expect
 
 @pytest.mark.e2e
 class TestProfileImportSection:
-    """Verify the "Importar perfil" section renders and behaves correctly."""
+    """Verify the "Import profile" section renders and behaves correctly."""
 
     @pytest.mark.profile
     async def test_import_section_renders(self, authed_page: Page) -> None:
@@ -32,7 +32,7 @@ class TestProfileImportSection:
 
         # Verify the main section heading
         await expect(
-            page.get_by_text("Importar perfil"),
+            page.get_by_text("Import profile"),
         ).to_be_visible()
 
         # Verify provider tabs
@@ -45,10 +45,10 @@ class TestProfileImportSection:
 
         # Verify URL input and import button
         await expect(
-            page.get_by_placeholder("https://linkedin.com/in/tu-perfil"),
+            page.get_by_placeholder("https://linkedin.com/in/your-profile"),
         ).to_be_visible()
         await expect(
-            page.get_by_role("button", name="Importar"),
+            page.get_by_role("button", name="Import"),
         ).to_be_visible()
 
     @pytest.mark.profile
@@ -61,7 +61,7 @@ class TestProfileImportSection:
 
         # The placeholder should update to show the Infojobs hint
         await expect(
-            page.get_by_placeholder("https://infojobs.net/tu-perfil"),
+            page.get_by_placeholder("https://infojobs.net/your-profile"),
         ).to_be_visible()
 
         # Click back to LinkedIn
@@ -69,7 +69,7 @@ class TestProfileImportSection:
 
         # The placeholder should switch back
         await expect(
-            page.get_by_placeholder("https://linkedin.com/in/tu-perfil"),
+            page.get_by_placeholder("https://linkedin.com/in/your-profile"),
         ).to_be_visible()
 
     @pytest.mark.profile
@@ -78,7 +78,7 @@ class TestProfileImportSection:
         page = authed_page
 
         test_url = "https://linkedin.com/in/testuser"
-        url_input = page.get_by_placeholder("https://linkedin.com/in/tu-perfil")
+        url_input = page.get_by_placeholder("https://linkedin.com/in/your-profile")
         await url_input.fill(test_url)
 
         # Verify the value was accepted
@@ -86,15 +86,15 @@ class TestProfileImportSection:
 
     @pytest.mark.profile
     async def test_cv_section_renders(self, authed_page: Page) -> None:
-        """The "Subir CV" section should be visible above the import section."""
+        """The "Upload CV" section should be visible above the import section."""
         page = authed_page
 
         # The CV section heading
-        await expect(page.get_by_text("Subir CV")).to_be_visible()
+        await expect(page.get_by_text("Upload CV")).to_be_visible()
 
         # The drop zone text
         await expect(
-            page.get_by_text("Arrastra un PDF aquí o haz clic para seleccionar"),
+            page.get_by_text("PDF only, up to 10 MB"),
         ).to_be_visible()
 
     @pytest.mark.profile
@@ -110,7 +110,7 @@ class TestProfileImportSection:
         await page.wait_for_timeout(1000)  # Extra time for React rendering
 
         # Scroll the import section into view and take a screenshot
-        import_section = page.get_by_text("Importar perfil")
+        import_section = page.get_by_text("Import profile")
         await import_section.scroll_into_view_if_needed()
         await page.wait_for_timeout(500)
 

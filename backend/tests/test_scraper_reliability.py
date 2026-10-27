@@ -5,7 +5,6 @@ STRICT TDD: Tests written before implementation.
 
 from __future__ import annotations
 
-import random
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -55,7 +54,9 @@ class TestBackoffCalculator:
     def test_backoff_jitter_is_random(self):
         """Over 1000 samples, at least 3 distinct values should appear (jitter)."""
         results = {calculate_backoff(0) for _ in range(1000)}
-        assert len(results) >= 3, f"Expected jitter to produce varied values, got {len(results)} unique"
+        assert len(results) >= 3, (
+            f"Expected jitter to produce varied values, got {len(results)} unique"
+        )
 
     def test_backoff_returns_float(self):
         """Backoff value must be a float (milliseconds precision)."""
@@ -85,16 +86,19 @@ class TestStealthModule:
 
     def test_apply_stealth_injects_script_to_context(self):
         """apply_stealth() should call context.add_init_script with a stealth script."""
-        from app.scrapers.stealth import apply_stealth, get_stealth_script
 
-        with patch("app.scrapers.stealth.get_stealth_script", return_value="(() => { /* test */ })();"):
+        with patch(
+            "app.scrapers.stealth.get_stealth_script", return_value="(() => { /* test */ })();"
+        ):
             mock_context = MagicMock()
             mock_context.add_init_script = AsyncMock()
 
             import inspect
+
             assert inspect.iscoroutinefunction(apply_stealth), "apply_stealth must be async"
 
             import asyncio
+
             asyncio.run(apply_stealth(mock_context))
             mock_context.add_init_script.assert_awaited_once_with("(() => { /* test */ })();")
 
@@ -105,7 +109,7 @@ class TestScraperEngineStealth:
     @patch("app.scrapers.engine.ScraperEngine._get_browser")
     async def test_stealth_injected_before_goto(self, mock_get_browser):
         """Engine._scrape_page() must call context.add_init_script before page.goto()."""
-        from app.scrapers.engine import ScraperEngine, PortalSelectors
+        from app.scrapers.engine import PortalSelectors, ScraperEngine
 
         # Create a mock browser that returns a mock context
         mock_browser = AsyncMock()
@@ -133,7 +137,7 @@ class TestScraperEngineStealth:
     @patch("app.scrapers.engine.ScraperEngine._get_browser")
     async def test_scrape_propagates_failure_without_stealth(self, mock_get_browser):
         """When stealth is unavailable, scrape should still try."""
-        from app.scrapers.engine import ScraperEngine, PortalSelectors
+        from app.scrapers.engine import PortalSelectors, ScraperEngine
 
         mock_browser = AsyncMock()
         mock_context = AsyncMock()
@@ -162,7 +166,7 @@ class TestFallbackBehavior:
 
     async def _make_engine_and_context(self):
         """Helper to create a mocked engine + context for fallback testing."""
-        from app.scrapers.engine import ScraperEngine, PortalSelectors
+        from app.scrapers.engine import PortalSelectors, ScraperEngine
 
         engine = ScraperEngine(headless=True)
         selectors = PortalSelectors(job_card=".card", title="h2", company=".company")
@@ -179,7 +183,7 @@ class TestFallbackBehavior:
     @patch("app.scrapers.engine.apply_stealth", new_callable=AsyncMock)
     async def test_fallback_retries_without_stealth(self, mock_apply):
         """After all retries with stealth fail, retry once without."""
-        from app.scrapers.engine import ScraperEngine, PortalSelectors
+        from app.scrapers.engine import PortalSelectors, ScraperEngine
 
         mock_browser = AsyncMock()
         mock_context = AsyncMock()

@@ -1,4 +1,5 @@
 """Pipeline run endpoints."""
+
 import logging
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -11,6 +12,7 @@ from app.auth.router import get_current_user_id
 from app.database import get_session
 from app.middleware.rate_limit import limiter
 from app.models import PipelineRun, Portal
+from app.portals.dedup import dedupe_portals_by_name
 from app.tasks.orchestrator import run_pipeline as run_pipeline_task
 
 logger = logging.getLogger(__name__)
@@ -38,16 +40,18 @@ async def latest_pipeline_runs(
 
     runs_list = []
     for run, portal_name in rows:
-        runs_list.append({
-            "pipeline_run_id": run.id,
-            "portal_name": portal_name or "Unknown",
-            "status": run.status,
-            "trigger": run.trigger,
-            "created_at": run.created_at.isoformat(),
-            "completed_at": run.completed_at.isoformat() if run.completed_at else None,
-            "error_step": run.error_step,
-            "error_msg": run.error_msg,
-        })
+        runs_list.append(
+            {
+                "pipeline_run_id": run.id,
+                "portal_name": portal_name or "Unknown",
+                "status": run.status,
+                "trigger": run.trigger,
+                "created_at": run.created_at.isoformat(),
+                "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+                "error_step": run.error_step,
+                "error_msg": run.error_msg,
+            }
+        )
 
     return {
         "runs": runs_list,
@@ -71,21 +75,12 @@ async def trigger_pipeline(
             (Portal.user_id == user_id) | (Portal.user_id.is_(None)),
         )
     )
-    portals_raw = result.scalars().all()
-    seen: dict[str, Portal] = {}
-    for p in portals_raw:
-        if p.name in seen:
-            existing = seen[p.name]
-            if existing.is_builtin and not p.is_builtin:
-                seen[p.name] = p
-        else:
-            seen[p.name] = p
-    portals = list(seen.values())
+    portals = dedupe_portals_by_name(result.scalars().all())
 
     if not portals:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No hay portales habilitados. Activá al menos uno primero.",
+            detail="No portals are enabled. Enable at least one first.",
         )
 
     runs = []
@@ -98,18 +93,20 @@ async def trigger_pipeline(
             trigger="manual",
         )
         session.add(pipeline_run)
-        runs.append({
-            "pipeline_run_id": pipeline_run.id,
-            "portal_id": portal.id,
-            "portal_name": portal.name,
-            "status": "pending",
-        })
+        runs.append(
+            {
+                "pipeline_run_id": pipeline_run.id,
+                "portal_id": portal.id,
+                "portal_name": portal.name,
+                "status": "pending",
+            }
+        )
 
     await session.commit()
 
     # Dispatch Celery tasks
     queued = 0
-    failed = 0
+    dispatch_errors: dict[str, str] = {}
     for run in runs:
         try:
             run_pipeline_task.delay(run["pipeline_run_id"])
@@ -118,28 +115,31 @@ async def trigger_pipeline(
         except Exception as exc:
             logger.warning("Failed to dispatch Celery task for %s: %s", run["pipeline_run_id"], exc)
             run["status"] = "dispatch_failed"
-            run["error"] = str(exc)
-            # Mark as failed in DB to avoid orphaned "pending" runs
-            async with get_session() as session:
-                pipeline = await session.get(PipelineRun, run["pipeline_run_id"])
-                if pipeline:
-                    pipeline.status = "failed"
-                    pipeline.error_msg = f"Dispatch failed: {exc}"
-            failed += 1
+            dispatch_errors[run["pipeline_run_id"]] = str(exc)
+
+    # Mark undispatched runs as failed to avoid orphaned "pending" runs
+    for run_id, error in dispatch_errors.items():
+        pipeline = await session.get(PipelineRun, run_id)
+        if pipeline:
+            pipeline.status = "failed"
+            pipeline.error_msg = f"Dispatch failed: {error}"
+    if dispatch_errors:
+        await session.commit()
+    failed = len(dispatch_errors)
 
     if queued == 0 and failed > 0:
         # All dispatches failed — Redis/Celery issue
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=(
-                "No se pudieron encolar las tareas. "
-                "Asegurate de que Redis esté corriendo y los workers de Celery estén activos."
+                "Could not queue the tasks. "
+                "Make sure Redis is running and the Celery workers are active."
             ),
         )
 
-    message = f"Búsqueda iniciada para {queued} portal(es)"
+    message = f"Search started for {queued} portal(s)"
     if failed:
-        message += f" ({failed} fallaron)"
+        message += f" ({failed} failed)"
 
     return {
         "message": message,
@@ -171,7 +171,7 @@ async def cancel_pipeline_run(
         if pipeline.status not in CANCELLABLE_STATUSES:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"No se puede cancelar un pipeline con estado '{pipeline.status}'",
+                detail=f"Cannot cancel a pipeline with status '{pipeline.status}'",
             )
 
         pipeline.status = "cancelled"
@@ -186,5 +186,5 @@ async def cancel_pipeline_run(
         logger.error("Failed to cancel pipeline %s: %s", run_id, exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error al cancelar el pipeline",
+            detail="Failed to cancel the pipeline",
         )

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.router import get_current_user_id
 from app.database import get_session
 from app.models import Notification, Profile
+from app.pagination import MAX_PAGE_SIZE
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -30,8 +31,8 @@ class NotificationResponse(BaseModel):
 async def list_notifications(
     user_id: str = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_session),
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=MAX_PAGE_SIZE),
+    offset: int = Query(default=0, ge=0),
 ):
     """List the current user's notifications, newest first."""
     result = await session.execute(

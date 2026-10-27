@@ -27,6 +27,9 @@ dependencies = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "aiosqlite>=0.20.0",
+    "structlog>=25.1.0",
+    "prometheus-client>=0.20.0",
+    "slowapi>=0.1.9",
 ]
 
 [project.optional-dependencies]
@@ -45,12 +48,24 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
 
+[tool.ruff.lint.per-file-ignores]
+# Alembic needs sys.path/env set up before model imports; migrations are generated code.
+"alembic/**" = ["E402", "E501"]
+"seed_portals.py" = ["E402", "E501"]
+
 [tool.ruff.format]
 quote-style = "double"
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+disable_error_code = ["name-defined"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# E2E tests need live servers; run them explicitly with `-m e2e`
+addopts = "-m 'not e2e'"
 filterwarnings = [
     "ignore::UserWarning:.*secrets",
 ]

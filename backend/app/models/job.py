@@ -12,9 +12,7 @@ class StoredJob(Base):
     """Stores scraped job postings."""
 
     __tablename__ = "stored_job"
-    __table_args__ = (
-        UniqueConstraint("portal_id", "external_id", name="uq_portal_external_job"),
-    )
+    __table_args__ = (UniqueConstraint("portal_id", "external_id", name="uq_portal_external_job"),)
 
     id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),

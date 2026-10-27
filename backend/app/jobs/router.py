@@ -1,7 +1,8 @@
 """Stored jobs endpoints."""
+
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.router import get_current_user_id
 from app.database import get_session
 from app.models import Application, Portal, StoredJob
+from app.pagination import MAX_PAGE_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +21,8 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 async def list_stored_jobs(
     user_id: str = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_session),
-    limit: int = 20,
-    offset: int = 0,
+    limit: int = Query(default=20, ge=1, le=MAX_PAGE_SIZE),
+    offset: int = Query(default=0, ge=0),
 ):
     """Return stored jobs visible to the current user (public + owned portals)."""
     result = await session.execute(
@@ -37,9 +39,7 @@ async def list_stored_jobs(
 
     # Batch-load portal names
     portal_ids = {j.portal_id for j in jobs}
-    portals_result = await session.execute(
-        select(Portal).where(Portal.id.in_(portal_ids))
-    )
+    portals_result = await session.execute(select(Portal).where(Portal.id.in_(portal_ids)))
     portal_map = {p.id: p for p in portals_result.scalars().all()}
 
     # Batch-load match scores from Application table
@@ -88,24 +88,34 @@ async def clear_stored_jobs(
         return {"deleted": 0}
 
     # Get job IDs for those portals
-    result = await session.execute(
-        select(StoredJob.id).where(StoredJob.portal_id.in_(portal_ids))
-    )
+    result = await session.execute(select(StoredJob.id).where(StoredJob.portal_id.in_(portal_ids)))
     job_ids = [row[0] for row in result]
 
-    deleted = len(job_ids)
     if not job_ids:
         return {"deleted": 0}
 
-    # Delete applications referencing those jobs first (FK constraint)
+    # Never remove another user's application, even if data was associated
+    # with this user's portal by an import or administrative operation.
     await session.execute(
-        sa_delete(Application).where(Application.stored_job_id.in_(job_ids))
+        sa_delete(Application).where(
+            Application.stored_job_id.in_(job_ids),
+            Application.user_id == user_id,
+        )
     )
-    # Delete the stored jobs
-    await session.execute(
-        sa_delete(StoredJob).where(StoredJob.portal_id.in_(portal_ids))
-    )
-    await session.commit()
 
+    # Preserve jobs still referenced by another user to avoid cross-tenant
+    # data loss and foreign-key failures.
+    referenced = select(Application.id).where(Application.stored_job_id == StoredJob.id).exists()
+    deletable_result = await session.execute(
+        select(StoredJob.id).where(
+            StoredJob.portal_id.in_(portal_ids),
+            ~referenced,
+        )
+    )
+    deletable_ids = list(deletable_result.scalars())
+    if deletable_ids:
+        await session.execute(sa_delete(StoredJob).where(StoredJob.id.in_(deletable_ids)))
+
+    deleted = len(deletable_ids)
     logger.info("Cleared %d stored jobs for user %s", deleted, user_id)
     return {"deleted": deleted}

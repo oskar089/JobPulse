@@ -1,68 +1,65 @@
 # =============================================================================
 #  Search Jobs Backend — Multi-stage Dockerfile
-#  Stage 1 (builder):   pip install + playwright install chromium
-#  Stage 2 (runtime):   python:3.12-slim, COPY --from=builder
+#  Stage 1 (builder):   pip install + download Playwright Chromium
+#  Stage 2 (runtime):   Chromium system libraries, non-root user
 # =============================================================================
 
+ARG PYTHON_IMAGE=python:3.12-slim-bookworm
+
 # ---- Stage 1: Builder -------------------------------------------------------
-FROM python:3.12-slim AS builder
+FROM ${PYTHON_IMAGE} AS builder
 
 WORKDIR /build
 
-# System dependencies for Playwright
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libglib2.0-0 \
-    libnss3 \
-    libnspr4 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libdbus-1-3 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libpango-1.0-0 \
-    libcairo2 \
-    libasound2 \
-    && rm -rf /var/lib/apt/lists/*
+# Shared, non-home location so the non-root runtime user can read the browsers
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Playwright browsers (Chromium only)
-RUN playwright install chromium && \
-    rm -rf /root/.cache/ms-playwright/chromium-*/browsers 2>/dev/null; \
-    true
+# Playwright browsers (Chromium only). System libraries are installed in the
+# runtime stage, which is where Chromium actually runs.
+RUN playwright install chromium
 
 # ---- Stage 2: Runtime -------------------------------------------------------
-FROM python:3.12-slim AS runtime
+FROM ${PYTHON_IMAGE} AS runtime
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
-
-# Runtime system dependencies (postgresql-client for pg_isready, curl for healthcheck)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    postgresql-client \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
 
 # Copy installed Python packages + Playwright from builder
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
-COPY --from=builder /root/.cache/ms-playwright /root/.cache/ms-playwright
+COPY --from=builder /ms-playwright /ms-playwright
 
-# Application code
-COPY . .
+# Runtime system dependencies: Chromium libraries (resolved by Playwright for
+# this distro), postgresql-client for pg_isready, curl and procps (pgrep) for
+# the Compose healthchecks
+RUN apt-get update \
+    && playwright install-deps chromium \
+    && apt-get install -y --no-install-recommends postgresql-client curl procps \
+    && rm -rf /var/lib/apt/lists/*
 
-# Create uploads directory (persisted via named volume)
-RUN mkdir -p /app/uploads/cv
+# Non-root runtime user
+RUN groupadd --system --gid 10001 app \
+    && useradd --system --uid 10001 --gid app --home-dir /app --no-create-home app \
+    && chmod -R a+rX /ms-playwright
+
+# Application code (owned by the runtime user: Celery Beat writes its schedule
+# file to the working directory)
+COPY --chown=app:app . .
+
+# Uploads directory (persisted via named volume; a new volume inherits this ownership)
+RUN mkdir -p /app/uploads/cv && chown -R app:app /app/uploads
 
 # Entrypoint
 COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
+RUN chmod 755 /docker-entrypoint.sh
+
+USER app
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
