@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.router import get_current_user_id
 from app.database import get_session
 from app.models import Notification, Profile
+from app.notifications.service import DEFAULT_PREFERENCES
 from app.pagination import MAX_PAGE_SIZE
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
@@ -73,14 +74,6 @@ async def mark_notification_read(
 # ---------------------------------------------------------------------------
 # Notification Preferences
 # ---------------------------------------------------------------------------
-
-DEFAULT_PREFERENCES: dict = {
-    "in_app": True,
-    "email": False,
-    "on_submit": True,
-    "on_fail": True,
-    "on_match": True,
-}
 
 
 class NotificationPreferencesResponse(BaseModel):

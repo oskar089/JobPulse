@@ -1,4 +1,5 @@
 import logging
+import re
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -104,21 +105,22 @@ class MatcherEngine:
             return 0.0
         title_lower = job_title.lower()
 
-        # Direct role match
+        # Direct role match: an exact match on any role beats a partial one
+        title_tokens = set(title_lower.split())
+        partial_match = False
         for role in target_roles:
             role_lower = role.lower()
             if role_lower in title_lower or title_lower in role_lower:
                 return 1.0
-            role_tokens = set(role_lower.split())
-            title_tokens = set(title_lower.split())
-            if role_tokens & title_tokens:
-                return 0.5
+            if set(role_lower.split()) & title_tokens:
+                partial_match = True
+        if partial_match:
+            return 0.5
 
         # Fallback: check headline/summary against job title
         profile_text = f"{headline} {summary}".lower()
         if profile_text:
             profile_tokens = set(profile_text.split())
-            title_tokens = set(title_lower.split())
             if profile_tokens & title_tokens:
                 return 0.3
 
@@ -192,7 +194,7 @@ class MatcherEngine:
                     combined += f" {desc} {role}".lower()
 
         for lvl_name, lvl_val in levels.items():
-            if lvl_name in combined:
+            if re.search(rf"\b{lvl_name}\b", combined):
                 diff = abs(user_lvl - lvl_val)
                 if diff == 0:
                     return 1.0

@@ -41,7 +41,6 @@ async def _apply_to_job(
             raise ValueError(f"Application {application_id} not found")
 
         app_row.status = "applying"
-        await session.flush()
 
         job = await session.get(StoredJob, app_row.stored_job_id)
         user = await session.get(User, user_id)
@@ -53,6 +52,7 @@ async def _apply_to_job(
             select(Profile).where(Profile.user_id == user_id),
         )
         profile = result.scalar_one_or_none()
+        await session.commit()
 
     if job is None:
         return await _fail_application(application_id, "StoredJob not found")
@@ -138,7 +138,6 @@ async def _apply_to_job(
                     "error": result.get("error"),
                 },
             }
-            pipeline.status = "applying"  # keep applying while more apps exist
         await session.commit()
 
     return {

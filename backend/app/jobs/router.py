@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
-@router.get("/")
+@router.get("")
+@router.get("/", include_in_schema=False)
 async def list_stored_jobs(
     user_id: str = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_session),
@@ -70,7 +71,8 @@ async def list_stored_jobs(
     ]
 
 
-@router.delete("/")
+@router.delete("")
+@router.delete("/", include_in_schema=False)
 async def clear_stored_jobs(
     user_id: str = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_session),

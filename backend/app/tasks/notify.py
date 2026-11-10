@@ -2,12 +2,17 @@
 
 import logging
 
+from sqlalchemy import select
+
 from app.celery_app import celery_app
 from app.database import async_session_factory
-from app.models import Application, StoredJob, User
+from app.models import Application, Profile, StoredJob, User
 from app.tasks import run_async
 
 logger = logging.getLogger(__name__)
+
+# Application status -> notification preference that enables its notification
+EVENT_PREFERENCE = {"submitted": "on_submit", "failed": "on_fail"}
 
 
 @celery_app.task(
@@ -26,7 +31,7 @@ async def _notify_result(
     application_id: str,
     pipeline_run_id: str,
 ) -> dict:
-    from app.notifications.service import NotificationService
+    from app.notifications.service import DEFAULT_PREFERENCES, NotificationService
 
     # Load application + related data
     async with async_session_factory() as session:
@@ -36,10 +41,20 @@ async def _notify_result(
 
         job = await session.get(StoredJob, app_row.stored_job_id)
         user = await session.get(User, app_row.user_id)
+        result = await session.execute(
+            select(Profile.notification_preferences).where(Profile.user_id == app_row.user_id),
+        )
+        preferences = {**DEFAULT_PREFERENCES, **(result.scalar_one_or_none() or {})}
 
     if job is None or user is None:
         logger.warning("Skipping notify for %s — missing job or user", application_id)
         return {"status": "failed", "error": "Missing job or user"}
+
+    event = EVENT_PREFERENCE.get(app_row.status)
+    if event is not None and not preferences[event]:
+        logger.info("Skipping notification for app %s — %s disabled", application_id, event)
+        return {"status": "skipped", "reason": f"Disabled by preference: {event}"}
+    channels = {"in_app": preferences["in_app"], "email": preferences["email"]}
 
     # Dispatch notification
     service = NotificationService(async_session_factory)
@@ -51,6 +66,7 @@ async def _notify_result(
                 user_email=user.email,
                 job_title=job.title,
                 company=job.company,
+                **channels,
             )
         elif app_row.status == "failed":
             await service.notify_application_failed(
@@ -60,6 +76,7 @@ async def _notify_result(
                 job_title=job.title,
                 company=job.company,
                 error=app_row.error_message or "Unknown error",
+                **channels,
             )
         else:
             logger.info(

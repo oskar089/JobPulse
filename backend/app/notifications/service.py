@@ -10,6 +10,14 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_PREFERENCES: dict[str, bool] = {
+    "in_app": True,
+    "email": False,
+    "on_submit": True,
+    "on_fail": True,
+    "on_match": True,
+}
+
 
 class NotificationService:
     """Dispatch notifications through in-app storage and email.
@@ -126,23 +134,27 @@ class NotificationService:
         user_email: str,
         job_title: str,
         company: str,
+        in_app: bool = True,
+        email: bool = True,
     ) -> None:
-        """Send in-app + email notification for a successful submission."""
+        """Notify a successful submission through the enabled channels."""
         title = "Application Submitted"
         body = f"Your application for {job_title} at {company} has been submitted."
 
-        await self.create_in_app(
-            user_id=user_id,
-            type="application_submitted",
-            title=title,
-            body=body,
-            application_id=application_id,
-        )
-        await self.send_email(
-            to=user_email,
-            subject=f"Application Submitted — {job_title} @ {company}",
-            body=body,
-        )
+        if in_app:
+            await self.create_in_app(
+                user_id=user_id,
+                type="application_submitted",
+                title=title,
+                body=body,
+                application_id=application_id,
+            )
+        if email:
+            await self.send_email(
+                to=user_email,
+                subject=f"Application Submitted — {job_title} @ {company}",
+                body=body,
+            )
 
     async def notify_application_failed(
         self,
@@ -152,22 +164,26 @@ class NotificationService:
         job_title: str,
         company: str,
         error: str,
+        in_app: bool = True,
+        email: bool = True,
     ) -> None:
-        """Send in-app + email notification for a failed submission."""
+        """Notify a failed submission through the enabled channels."""
         title = "Application Failed"
         # Sanitize error text: truncate to 200 chars, strip non-printable chars
         safe_error = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", error)[:200]
         body = f"Your application for {job_title} at {company} failed: {safe_error}"
 
-        await self.create_in_app(
-            user_id=user_id,
-            type="application_failed",
-            title=title,
-            body=body,
-            application_id=application_id,
-        )
-        await self.send_email(
-            to=user_email,
-            subject=f"Application Failed — {job_title} @ {company}",
-            body=body,
-        )
+        if in_app:
+            await self.create_in_app(
+                user_id=user_id,
+                type="application_failed",
+                title=title,
+                body=body,
+                application_id=application_id,
+            )
+        if email:
+            await self.send_email(
+                to=user_email,
+                subject=f"Application Failed — {job_title} @ {company}",
+                body=body,
+            )

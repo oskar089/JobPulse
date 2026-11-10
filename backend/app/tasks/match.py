@@ -39,7 +39,6 @@ async def _match_applications(
         if pipeline is None:
             raise ValueError(f"PipelineRun {pipeline_run_id} not found")
         pipeline.status = "matching"
-        await session.flush()
 
         # Load profile
         result = await session.execute(
@@ -75,9 +74,18 @@ async def _match_applications(
         )
         jobs = result.scalars().all()
 
+        # Jobs the user already has an application for must not be applied to again
+        result = await session.execute(
+            select(Application.stored_job_id).where(Application.user_id == user_id),
+        )
+        already_applied = set(result.scalars().all())
+        await session.commit()
+
     # --- Score each job (no session needed) ---
     scored: list[tuple[StoredJob, float, dict]] = []
     for job in jobs:
+        if job.id in already_applied:
+            continue
         job_dict = {
             "title": job.title,
             "company": job.company,

@@ -25,10 +25,12 @@ async def get_redis() -> Redis:
     return Redis.from_url(settings.redis_url, decode_responses=True)
 
 
-async def _run_security_operation(operation: Awaitable[T], description: str) -> T:
+async def _run_security_operation(operation: Awaitable[T] | T, description: str) -> T:
     """Execute a Redis security operation and fail closed on outages."""
     try:
-        return await operation
+        if isinstance(operation, Awaitable):
+            return await operation
+        return operation
     except RedisError as exc:
         logger.error("Redis authentication operation failed: %s", description)
         raise AuthStoreUnavailableError("Authentication store unavailable") from exc

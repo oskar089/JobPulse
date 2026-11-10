@@ -99,8 +99,8 @@ async def create_portal(
     portal = Portal(
         user_id=user_id,
         name=body.name,
-        base_url=body.base_url,
-        job_listing_url=body.job_listing_url,
+        base_url=str(body.base_url),
+        job_listing_url=str(body.job_listing_url),
         selectors=body.selectors.model_dump(),
         scrape_interval_min=body.scrape_interval_min,
     )

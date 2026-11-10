@@ -19,7 +19,9 @@ celery_app.conf.accept_content = ["json"]
 celery_app.conf.task_track_started = True
 celery_app.conf.task_ignore_result = False
 
-# Import task modules so Celery registers them
+# Import the beat schedule and task modules so Celery registers them, including
+# when beat runs standalone (celery -A app.celery_app beat)
+import app.celery_beat  # noqa: E402, F401
 import app.tasks.apply  # noqa: E402, F401
 import app.tasks.match  # noqa: E402, F401
 import app.tasks.notify  # noqa: E402, F401

@@ -53,7 +53,6 @@ async def _scrape_portal(
         pipeline.status = "scraping"
         pipeline.error_step = None
         pipeline.error_msg = None
-        await session.flush()
 
         portal = await session.get(Portal, portal_id)
         if portal is None:
@@ -76,6 +75,7 @@ async def _scrape_portal(
             apply_button=raw.get("apply_button"),
         )
         listing_url = portal.job_listing_url
+        await session.commit()
 
     # --- Run the scraper (I/O-bound, no session held) ---
     try:
@@ -99,9 +99,13 @@ async def _scrape_portal(
 
     # --- Persist new StoredJobs ---
     stored = 0
+    seen_external_ids: set[str] = set()
     async with async_session_factory() as session:
         for sj in scraped:
             if sj.external_id:
+                if sj.external_id in seen_external_ids:
+                    continue
+                seen_external_ids.add(sj.external_id)
                 existing = await session.execute(
                     select(StoredJob).where(
                         StoredJob.portal_id == portal_id,

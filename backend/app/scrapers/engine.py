@@ -1,7 +1,9 @@
 import asyncio
+import hashlib
 import logging
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from app.scrapers.stealth import apply_stealth, calculate_backoff
 from app.security.url_guard import UnsafeURLError, assert_public_url
@@ -10,6 +12,10 @@ logger = logging.getLogger(__name__)
 
 # Browser-internal URLs that never leave the page, so they cannot reach the network.
 _INLINE_SCHEMES = ("data:", "blob:", "about:")
+
+# Query parameters that vary between page loads without identifying the job.
+_TRACKING_PARAMS = frozenset({"ebp", "lc", "pagenum", "position", "refid", "trackingid", "trk"})
+_TRACKING_PREFIXES = ("utm_",)
 
 
 @dataclass
@@ -40,6 +46,33 @@ class ScrapedJob:
     salary_range: str | None = None
     posted_at: str | None = None  # Kept as string for flexibility across portals
     language: str = "en"
+
+
+def _is_tracking_param(name: str) -> bool:
+    lowered = name.lower()
+    return lowered in _TRACKING_PARAMS or lowered.startswith(_TRACKING_PREFIXES)
+
+
+def resolve_job_identity(job: ScrapedJob, base_url: str) -> ScrapedJob:
+    """Make the job URL absolute and derive a stable ``external_id`` from it.
+
+    The identifier ignores the fragment and tracking parameters so the same
+    posting scraped twice is recognised as one job.
+    """
+    if not job.url:
+        return job
+    job.url = urljoin(base_url, job.url)
+    parts = urlsplit(job.url)
+    query = sorted(
+        (name, value)
+        for name, value in parse_qsl(parts.query, keep_blank_values=True)
+        if not _is_tracking_param(name)
+    )
+    canonical = urlunsplit(
+        (parts.scheme, parts.netloc.lower(), parts.path.rstrip("/"), urlencode(query), "")
+    )
+    job.external_id = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return job
 
 
 class ScraperEngine:
@@ -217,7 +250,7 @@ class ScraperEngine:
                 jobs: list[ScrapedJob] = []
                 for card in cards:
                     try:
-                        job = await self._extract_job(card, selectors)
+                        job = resolve_job_identity(await self._extract_job(card, selectors), url)
                         if job.title and job.company:
                             jobs.append(job)
                     except Exception as exc:
