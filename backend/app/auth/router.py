@@ -1,6 +1,8 @@
 """Auth router with JWT cookie auth, refresh rotation, logout, and theft detection.
 
-Maintains dual auth mode: accepts both cookies and Bearer headers.
+Maintains dual auth mode: accepts both cookies and Bearer headers. Browser
+clients renew their session through the httpOnly ``refresh_token`` cookie,
+which is only sent to the auth endpoints.
 """
 
 from __future__ import annotations
@@ -54,6 +56,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # ---------------------------------------------------------------------------
 ACCESS_TOKEN_MAX_AGE = 900  # 15 minutes in seconds
 REFRESH_TOKEN_TTL = 604800  # 7 days in seconds
+REFRESH_COOKIE_NAME = "refresh_token"
+REFRESH_COOKIE_PATH = "/api/auth"
 
 
 def _set_access_token_cookie(response: Response, token: str) -> None:
@@ -73,6 +77,25 @@ def _set_access_token_cookie(response: Response, token: str) -> None:
     )
 
 
+def _set_refresh_token_cookie(response: Response, token: str) -> None:
+    """Set the refresh token as an httpOnly cookie scoped to the auth endpoints."""
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=token,
+        max_age=REFRESH_TOKEN_TTL,
+        httponly=True,
+        secure=not settings.debug,
+        samesite="lax",
+        path=REFRESH_COOKIE_PATH,
+    )
+
+
+def _set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
+    """Set both session cookies after issuing a token pair."""
+    _set_access_token_cookie(response, access_token)
+    _set_refresh_token_cookie(response, refresh_token)
+
+
 def _lockout_subject(user_id: str, request: Request) -> str:
     """Scope failed-login counters to user and client so strangers cannot lock an account."""
     client_host = request.client.host if request.client else "unknown"
@@ -89,6 +112,19 @@ def _clear_access_token_cookie(response: Response) -> None:
         secure=not settings.debug,
         samesite="lax",
         path="/api",
+    )
+
+
+def _clear_refresh_token_cookie(response: Response) -> None:
+    """Clear the refresh_token cookie."""
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value="",
+        max_age=0,
+        httponly=True,
+        secure=not settings.debug,
+        samesite="lax",
+        path=REFRESH_COOKIE_PATH,
     )
 
 
@@ -235,7 +271,7 @@ async def register(
     access = create_access_token(user.id, role=user.role)
     refresh = create_refresh_token(user.id, role=user.role)
 
-    _set_access_token_cookie(response, access)
+    _set_auth_cookies(response, access, refresh)
     return TokenResponse(access_token=access, refresh_token=refresh)
 
 
@@ -280,7 +316,7 @@ async def login(
     access = create_access_token(user.id, role=user.role)
     refresh = create_refresh_token(user.id, role=user.role)
 
-    _set_access_token_cookie(response, access)
+    _set_auth_cookies(response, access, refresh)
     return TokenResponse(access_token=access, refresh_token=refresh)
 
 
@@ -360,18 +396,31 @@ async def reset_password(
 
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh_token(
-    body: RefreshRequest,
+    request: Request,
     response: Response,
+    body: RefreshRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ):
     """Issue a new token pair with refresh token rotation.
 
+    The refresh token is read from the request body (API clients) or, when
+    absent, from the httpOnly cookie (browser clients).
+
     1. Validate the refresh token
     2. Check blacklist — if found, trigger theft detection
     3. Blacklist the old refresh token
-    4. Issue a new access token (cookie) + new refresh token (body)
+    4. Issue a new access token + refresh token (cookies and body)
     """
-    payload = _decode_refresh_token(body.refresh_token)
+    current_refresh = (
+        body.refresh_token if body is not None else request.cookies.get(REFRESH_COOKIE_NAME)
+    )
+    if not current_refresh:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+        )
+
+    payload = _decode_refresh_token(current_refresh)
     if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -392,7 +441,7 @@ async def refresh_token(
         )
 
     # Check blacklist — theft detection
-    blacklisted = await is_token_blacklisted(user_id, body.refresh_token)
+    blacklisted = await is_token_blacklisted(user_id, current_refresh)
     if blacklisted:
         logger.warning(
             "Theft detected: blacklisted refresh token reused for user %s. "
@@ -414,29 +463,30 @@ async def refresh_token(
         )
 
     # Blacklist the current refresh token
-    await blacklist_refresh_token(user_id, body.refresh_token, REFRESH_TOKEN_TTL)
+    await blacklist_refresh_token(user_id, current_refresh, REFRESH_TOKEN_TTL)
 
     # Issue new tokens
     new_access = create_access_token(user_id, role=user.role)
     new_refresh = create_refresh_token(user_id, role=user.role)
 
-    _set_access_token_cookie(response, new_access)
+    _set_auth_cookies(response, new_access, new_refresh)
     return TokenResponse(access_token=new_access, refresh_token=new_refresh)
 
 
 @router.post("/logout")
 async def logout(
+    request: Request,
     body: LogoutRequest,
     response: Response,
     user_id: str = Depends(get_current_user_id),
 ):
-    """Logout by blacklisting the refresh token (if provided) and clearing the cookie."""
-    # Blacklist the refresh token if one was provided
-    if body.refresh_token:
-        await blacklist_refresh_token(user_id, body.refresh_token, REFRESH_TOKEN_TTL)
+    """Logout by blacklisting the refresh token (body or cookie) and clearing the cookies."""
+    current_refresh = body.refresh_token or request.cookies.get(REFRESH_COOKIE_NAME)
+    if current_refresh:
+        await blacklist_refresh_token(user_id, current_refresh, REFRESH_TOKEN_TTL)
 
-    # Clear the cookie
     _clear_access_token_cookie(response)
+    _clear_refresh_token_cookie(response)
 
     return {"message": "Logged out successfully"}
 
