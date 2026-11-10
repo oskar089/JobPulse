@@ -10,6 +10,16 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+SMTP_IMPLICIT_TLS_PORT = 465
+
+
+def _tls_options() -> dict[str, bool]:
+    """Implicit TLS on port 465; otherwise require a STARTTLS upgrade."""
+    if settings.smtp_port == SMTP_IMPLICIT_TLS_PORT:
+        return {"use_tls": True}
+    return {"start_tls": True}
+
+
 DEFAULT_PREFERENCES: dict[str, bool] = {
     "in_app": True,
     "email": False,
@@ -71,7 +81,7 @@ class NotificationService:
         msg = EmailMessage()
         msg["From"] = settings.smtp_from
         msg["To"] = to
-        msg["Subject"] = subject
+        msg["Subject"] = " ".join(subject.split())
         msg.set_content(body)
 
         last_error: Exception | None = None
@@ -81,9 +91,8 @@ class NotificationService:
                     hostname=settings.smtp_host,
                     port=settings.smtp_port,
                     timeout=30,
+                    **_tls_options(),
                 ) as smtp:
-                    # Enforce STARTTLS — fail if server does not support it
-                    await smtp.starttls()
                     if settings.smtp_user and settings.smtp_password:
                         await smtp.login(settings.smtp_user, settings.smtp_password)
                     await smtp.send_message(msg)
@@ -114,8 +123,8 @@ class NotificationService:
                 hostname=settings.smtp_host,
                 port=settings.smtp_port,
                 timeout=10,
+                **_tls_options(),
             ) as smtp:
-                await smtp.starttls()
                 await smtp.quit()
             logger.info(
                 "SMTP connectivity check passed for %s:%s", settings.smtp_host, settings.smtp_port

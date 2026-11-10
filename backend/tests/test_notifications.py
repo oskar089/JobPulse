@@ -22,14 +22,14 @@ def service() -> NotificationService:
 
 
 @pytest.mark.asyncio
-async def test_send_email_calls_starttls(service: NotificationService) -> None:
-    """GIVEN SMTP is configured WHEN send_email connects THEN it calls starttls()."""
+async def test_send_email_requires_starttls(service: NotificationService) -> None:
+    """GIVEN SMTP is configured WHEN send_email connects THEN STARTTLS is required."""
     mock_smtp = AsyncMock()
     mock_smtp.__aenter__.return_value = mock_smtp
 
     with (
         patch("app.notifications.service.settings") as mock_settings,
-        patch("aiosmtplib.SMTP", return_value=mock_smtp),
+        patch("aiosmtplib.SMTP", return_value=mock_smtp) as mock_smtp_class,
     ):
         mock_settings.smtp_host = "smtp.example.com"
         mock_settings.smtp_port = 587
@@ -40,7 +40,8 @@ async def test_send_email_calls_starttls(service: NotificationService) -> None:
         result = await service.send_email(to="test@example.com", subject="Test", body="Hello")
 
     assert result is True
-    mock_smtp.starttls.assert_awaited_once()
+    assert mock_smtp_class.call_args.kwargs["start_tls"] is True
+    mock_smtp.starttls.assert_not_awaited()
     mock_smtp.send_message.assert_awaited_once()
 
 
@@ -63,8 +64,7 @@ async def test_send_email_with_auth_calls_login(service: NotificationService) ->
         result = await service.send_email(to="other@example.com", subject="Hi", body="World")
 
     assert result is True
-    mock_smtp.starttls.assert_awaited_once()
-    # login must be called after starttls, before send_message
+    # login must be called before send_message
     mock_smtp.login.assert_awaited_once_with("user@example.com", "secret")
     mock_smtp.send_message.assert_awaited_once()
 
@@ -86,8 +86,7 @@ async def test_send_email_starttls_failure_returns_false(
 ) -> None:
     """GIVEN SMTP server rejects STARTTLS WHEN send_email runs THEN it returns False."""
     mock_smtp = AsyncMock()
-    mock_smtp.__aenter__.return_value = mock_smtp
-    mock_smtp.starttls.side_effect = Exception("STARTTLS not supported")
+    mock_smtp.__aenter__.side_effect = Exception("STARTTLS not supported")
 
     with (
         patch("app.notifications.service.settings") as mock_settings,
@@ -102,8 +101,7 @@ async def test_send_email_starttls_failure_returns_false(
         result = await service.send_email(to="test@example.com", subject="Test", body="Hello")
 
     assert result is False
-    # starttls is called on each of the 3 retry attempts
-    assert mock_smtp.starttls.awaited
+    assert mock_smtp.__aenter__.await_count == 3
     assert mock_smtp.send_message.await_count == 0
 
 
@@ -127,7 +125,6 @@ async def test_send_email_login_failure_returns_false(service: NotificationServi
         result = await service.send_email(to="test@example.com", subject="Test", body="Hello")
 
     assert result is False
-    mock_smtp.starttls.assert_awaited()
     assert mock_smtp.send_message.await_count == 0
 
 
@@ -154,7 +151,6 @@ async def test_check_smtp_connectivity_success(service: NotificationService) -> 
         result = await service.check_smtp_connectivity()
 
     assert result is True
-    mock_smtp.starttls.assert_awaited_once()
     mock_smtp.quit.assert_awaited_once()
 
 
@@ -177,7 +173,9 @@ async def test_check_smtp_connectivity_with_different_port(service: Notification
         result = await service.check_smtp_connectivity()
 
     assert result is True
-    mock_smtp_class.assert_called_once_with(hostname="smtp.example.com", port=465, timeout=10)
+    mock_smtp_class.assert_called_once_with(
+        hostname="smtp.example.com", port=465, timeout=10, use_tls=True
+    )
 
 
 @pytest.mark.asyncio
