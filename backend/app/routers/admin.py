@@ -110,14 +110,11 @@ def _compute_portal_performance(
         portal_name = portals.get(job.portal_id, "unknown")
         portal_jobs[portal_name] += 1
 
+    job_portal = {job.id: portals.get(job.portal_id, "unknown") for job in jobs}
     for app in apps:
-        job_id = app.stored_job_id
-        # Find which portal this job belongs to
-        for job in jobs:
-            if job.id == job_id:
-                portal_name = portals.get(job.portal_id, "unknown")
-                portal_apps[portal_name] += 1
-                break
+        portal_name = job_portal.get(app.stored_job_id)
+        if portal_name is not None:
+            portal_apps[portal_name] += 1
 
     result = []
     all_portals = set(portal_jobs.keys()) | set(portal_apps.keys())

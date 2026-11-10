@@ -12,6 +12,7 @@ from app.auth.router import get_current_user_id
 from app.database import get_session
 from app.middleware.rate_limit import limiter
 from app.models import PipelineRun, Portal
+from app.path_params import UUIDPath
 from app.portals.dedup import dedupe_portals_by_name
 from app.tasks.orchestrator import run_pipeline as run_pipeline_task
 
@@ -149,7 +150,7 @@ async def trigger_pipeline(
 
 @router.post("/{run_id}/cancel")
 async def cancel_pipeline_run(
-    run_id: str,
+    run_id: UUIDPath,
     user_id: str = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_session),
 ):

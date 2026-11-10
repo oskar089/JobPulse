@@ -1,6 +1,8 @@
 import logging
 import random
 
+from app.security.url_guard import UnsafeURLError, assert_public_url
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,6 +45,11 @@ class AutoApplicator:
         Returns ``{"status": "submitted"}`` on success,
         or ``{"status": "failed", "error": "..."}`` on failure.
         """
+        try:
+            await assert_public_url(job_url)
+        except UnsafeURLError as exc:
+            return {"status": "failed", "error": f"Unsafe job URL: {exc}"}
+
         browser = await self._get_browser()
         context = await browser.new_context(
             user_agent=(

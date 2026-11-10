@@ -10,6 +10,7 @@ from app.database import get_session
 from app.models import Notification, Profile
 from app.notifications.service import DEFAULT_PREFERENCES
 from app.pagination import MAX_PAGE_SIZE
+from app.path_params import UUIDPath
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -48,7 +49,7 @@ async def list_notifications(
 
 @router.patch("/{notification_id}/read")
 async def mark_notification_read(
-    notification_id: str,
+    notification_id: UUIDPath,
     user_id: str = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_session),
 ):

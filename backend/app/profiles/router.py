@@ -35,6 +35,16 @@ SCRAPE_RATE_LIMIT = "5/minute"
 CV_UPLOAD_RATE_LIMIT = "10/minute"
 
 
+LINKEDIN_DOMAINS = ("linkedin.com",)
+INFOJOBS_DOMAINS = ("infojobs.com", "infojobs.com.ar")
+
+
+def _host_matches(url: str, domains: tuple[str, ...]) -> bool:
+    """Return True when the URL host is one of ``domains`` or a subdomain of it."""
+    hostname = (urlparse(url).hostname or "").lower()
+    return any(hostname == d or hostname.endswith(f".{d}") for d in domains)
+
+
 @router.get("", response_model=ProfileResponse)
 async def get_profile(
     user_id: str = Depends(get_current_user_id),
@@ -64,6 +74,11 @@ async def upsert_profile(
     profile = result.scalar_one_or_none()
 
     update_data = body.model_dump(exclude_unset=True)
+    if update_data.get("experience_level", "") is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="experience_level cannot be null",
+        )
 
     if profile is None:
         # Create new profile — require at least experience_level
@@ -119,8 +134,7 @@ async def import_linkedin(
         # Free Playwright path
         from app.scrapers.profile_scraper import LinkedInProfileScraper
 
-        parsed = urlparse(str(body.url))
-        if parsed.netloc not in ("linkedin.com", "www.linkedin.com"):
+        if not _host_matches(str(body.url), LINKEDIN_DOMAINS):
             raise HTTPException(
                 status_code=422,
                 detail=f"Invalid LinkedIn URL: '{body.url}'. URL must be a valid linkedin.com URL.",
@@ -153,13 +167,7 @@ async def import_infojobs(
 
     Returns parsed fields for the user to review before saving.
     """
-    parsed = urlparse(str(body.url))
-    if parsed.netloc not in (
-        "infojobs.com",
-        "www.infojobs.com",
-        "infojobs.com.ar",
-        "www.infojobs.com.ar",
-    ):
+    if not _host_matches(str(body.url), INFOJOBS_DOMAINS):
         raise HTTPException(
             status_code=422,
             detail=f"Invalid Infojobs URL: '{body.url}'. URL must be a valid infojobs.com URL.",
@@ -239,7 +247,7 @@ async def upload_cv(
     await validate_file(file)
 
     # --- Validate file size ---
-    content = await file.read()
+    content = await file.read(_MAX_CV_SIZE + 1)
     if len(content) > _MAX_CV_SIZE:
         raise HTTPException(
             status_code=422,

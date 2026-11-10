@@ -1,5 +1,6 @@
 """FastAPI application entry point for Search Jobs backend."""
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -131,8 +132,10 @@ async def health_check():
     # Redis check — send PING
     try:
         r = await get_redis()
-        await r.ping()
-        await r.close()
+        try:
+            await r.ping()
+        finally:
+            await r.aclose()
         statuses["redis"] = "healthy"
     except Exception as exc:
         logger.warning("Health check: Redis unhealthy", error=str(exc))
@@ -140,7 +143,7 @@ async def health_check():
 
     # Celery check — ping workers with 3-second timeout
     try:
-        result = celery_app.control.ping(timeout=3)
+        result = await asyncio.to_thread(celery_app.control.ping, timeout=3)
         statuses["celery"] = "healthy" if result else "unhealthy"
     except Exception as exc:
         logger.warning("Health check: Celery unhealthy", error=str(exc))

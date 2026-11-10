@@ -11,6 +11,7 @@ from app.auth.router import get_current_user_id
 from app.database import get_session
 from app.models import Application, Portal, StoredJob
 from app.pagination import MAX_PAGE_SIZE
+from app.path_params import UUIDPath
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,7 @@ async def list_applications(
 
 @router.get("/{application_id}")
 async def get_application(
-    application_id: str,
+    application_id: UUIDPath,
     user_id: str = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_session),
 ):

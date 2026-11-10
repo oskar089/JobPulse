@@ -219,7 +219,7 @@ class FileStorageService:
 
         # Defense-in-depth: ensure resolved path is within upload directory
         resolved_upload = self._upload_dir.resolve()
-        if not str(path).startswith(str(resolved_upload)):
+        if not path.is_relative_to(resolved_upload):
             raise FileNotFoundError(f"CV not found: {cv_id}")
 
         if not path.exists():

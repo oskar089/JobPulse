@@ -1,3 +1,5 @@
+from collections.abc import AsyncIterator
+
 from sqlalchemy import JSON, String
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -105,7 +107,7 @@ class Base(DeclarativeBase):
     pass
 
 
-async def get_session() -> AsyncSession:  # type: ignore[misc]
+async def get_session() -> AsyncIterator[AsyncSession]:
     async with _get_session_factory()() as session:
         try:
             yield session

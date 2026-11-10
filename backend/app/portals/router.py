@@ -9,6 +9,7 @@ from app.auth.router import get_current_user_id
 from app.database import get_session
 from app.middleware.rate_limit import limiter
 from app.models import Portal
+from app.path_params import UUIDPath
 from app.portals.dedup import dedupe_portals_by_name
 from app.portals.schemas import PortalCreate, PortalResponse, PortalUpdate
 from app.scrapers.engine import PortalSelectors as EngineSelectors
@@ -21,7 +22,7 @@ router = APIRouter(prefix="/portals", tags=["portals"])
 
 
 async def _get_portal_or_404(
-    portal_id: str,
+    portal_id: UUIDPath,
     session: AsyncSession,
 ) -> Portal:
     """Fetch a portal by ID or raise 404."""
@@ -111,7 +112,7 @@ async def create_portal(
 
 @router.get("/{portal_id}", response_model=PortalResponse)
 async def get_portal(
-    portal_id: str,
+    portal_id: UUIDPath,
     session: AsyncSession = Depends(get_session),
     user_id: str = Depends(get_current_user_id),
 ):
@@ -123,7 +124,7 @@ async def get_portal(
 
 @router.put("/{portal_id}", response_model=PortalResponse)
 async def update_portal(
-    portal_id: str,
+    portal_id: UUIDPath,
     body: PortalUpdate,
     user_id: str = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_session),
@@ -137,7 +138,7 @@ async def update_portal(
         str(body.job_listing_url) if body.job_listing_url else None,
     )
 
-    update_data = body.model_dump(exclude_unset=True)
+    update_data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     for url_field in ("base_url", "job_listing_url"):
         if update_data.get(url_field) is not None:
             update_data[url_field] = str(update_data[url_field])
@@ -153,7 +154,7 @@ async def update_portal(
 
 @router.delete("/{portal_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_portal(
-    portal_id: str,
+    portal_id: UUIDPath,
     user_id: str = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_session),
 ):
@@ -167,7 +168,7 @@ async def delete_portal(
 
 @router.patch("/{portal_id}/toggle", response_model=PortalResponse)
 async def toggle_portal(
-    portal_id: str,
+    portal_id: UUIDPath,
     user_id: str = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_session),
 ):
@@ -182,7 +183,7 @@ async def toggle_portal(
 
 @router.post("/{portal_id}/dry-run")
 async def dry_run_portal(
-    portal_id: str,
+    portal_id: UUIDPath,
     test_url: str | None = Query(
         default=None,
         description="Override the portal's job_listing_url for this test run",
