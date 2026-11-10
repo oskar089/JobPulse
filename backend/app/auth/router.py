@@ -13,6 +13,7 @@ import logging
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from jose import JWTError, jwt
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.redis_client import (
@@ -266,7 +267,13 @@ async def register(
         name=body.name,
     )
     session.add(user)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered",
+        )
 
     access = create_access_token(user.id, role=user.role)
     refresh = create_refresh_token(user.id, role=user.role)
@@ -462,8 +469,12 @@ async def refresh_token(
             detail="User not found",
         )
 
-    # Blacklist the current refresh token
-    await blacklist_refresh_token(user_id, current_refresh, REFRESH_TOKEN_TTL)
+    # Blacklist the current refresh token; losing a concurrent rotation race means reuse
+    if not await blacklist_refresh_token(user_id, current_refresh, REFRESH_TOKEN_TTL):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token has been revoked. Please log in again.",
+        )
 
     # Issue new tokens
     new_access = create_access_token(user_id, role=user.role)

@@ -45,8 +45,11 @@ def auth_redis_backend():
     values: dict[str, str] = {}
 
     class MemoryRedis:
-        async def sadd(self, key: str, value: str) -> None:
-            sets.setdefault(key, set()).add(value)
+        async def sadd(self, key: str, value: str) -> int:
+            members = sets.setdefault(key, set())
+            added = value not in members
+            members.add(value)
+            return int(added)
 
         async def sismember(self, key: str, value: str) -> bool:
             return value in sets.get(key, set())

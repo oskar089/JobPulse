@@ -40,13 +40,20 @@ async def blacklist_refresh_token(
     user_id: str,
     refresh_token: str,
     ttl_seconds: int = 604800,
-) -> None:
-    """Revoke a refresh token until its natural expiration."""
+) -> bool:
+    """Revoke a refresh token until its natural expiration.
+
+    Returns ``True`` only for the caller that revoked it first, so concurrent
+    rotations of the same token cannot both succeed.
+    """
     redis = await get_redis()
     try:
         key = f"refresh_blacklist:{user_id}"
-        await _run_security_operation(redis.sadd(key, refresh_token), "revoke refresh token")
+        added = await _run_security_operation(
+            redis.sadd(key, refresh_token), "revoke refresh token"
+        )
         await _run_security_operation(redis.expire(key, ttl_seconds), "expire revocation set")
+        return bool(added)
     finally:
         await redis.aclose()
 
@@ -75,8 +82,8 @@ async def record_failed_login(user_id: str) -> int:
     try:
         key = f"lockout:{user_id}"
         count = await _run_security_operation(redis.incr(key), "record failed login")
-        if count == 1:
-            await _run_security_operation(redis.expire(key, LOCKOUT_TTL), "expire lockout")
+        # Refresh the TTL on every failure so a crash can never leave a key without expiry.
+        await _run_security_operation(redis.expire(key, LOCKOUT_TTL), "expire lockout")
         return int(count)
     finally:
         await redis.aclose()

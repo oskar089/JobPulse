@@ -154,10 +154,11 @@ def mock_redis():
     class MockRedisInstance:
         """In-memory mock of async Redis client methods used by auth."""
 
-        async def sadd(self, key: str, value: str) -> None:
-            if key not in redis_data:
-                redis_data[key] = set()
-            redis_data[key].add(value)
+        async def sadd(self, key: str, value: str) -> int:
+            members = redis_data.setdefault(key, set())
+            added = value not in members
+            members.add(value)
+            return int(added)
 
         async def sismember(self, key: str, value: str) -> bool:
             return value in redis_data.get(key, set())
